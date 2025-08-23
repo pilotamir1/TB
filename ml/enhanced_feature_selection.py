@@ -622,37 +622,50 @@ class EnhancedFeatureSelector:
         all_features_for_sffs = base_features + candidate_features
         X_sffs = X[all_features_for_sffs]
         
-        # Create estimator for SFFS
-        estimator = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+        # Check if we have enough samples for CV
+        min_samples_needed = self.cv_folds * 2  # At least 2 samples per fold
+        if len(X_sffs) < min_samples_needed:
+            self.logger.warning(f"Insufficient samples for CV ({len(X_sffs)} < {min_samples_needed}), skipping SFFS")
+            return candidate_features[:min(len(candidate_features), self.max_features - len(base_features))], 0.0
         
-        # Setup cross-validation
-        cv = StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=42)
+        # Create estimator for SFFS
+        estimator = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+        
+        # Setup cross-validation with adaptive folds
+        actual_cv_folds = min(self.cv_folds, len(X_sffs) // 2)
+        cv = StratifiedKFold(n_splits=actual_cv_folds, shuffle=True, random_state=42)
         
         # Configure SFFS
         max_features = min(self.max_features - len(base_features), len(candidate_features))
         max_features = max(1, max_features)  # At least 1 feature to select
         
-        # Create scoring function
+        # Create scoring function with better error handling
         def cv_score_func(estimator, X_subset, y_subset):
-            if self.scoring_metric == 'balanced_accuracy':
-                scores = cross_val_score(estimator, X_subset, y_subset, cv=cv, 
-                                       scoring='balanced_accuracy', n_jobs=-1)
-            else:  # f1_macro
-                scores = cross_val_score(estimator, X_subset, y_subset, cv=cv, 
-                                       scoring='f1_macro', n_jobs=-1)
-            return scores.mean()
+            try:
+                if self.scoring_metric == 'balanced_accuracy':
+                    scores = cross_val_score(estimator, X_subset, y_subset, cv=cv, 
+                                           scoring='balanced_accuracy', n_jobs=-1)
+                else:  # f1_macro
+                    scores = cross_val_score(estimator, X_subset, y_subset, cv=cv, 
+                                           scoring='f1_macro', n_jobs=-1)
+                # Filter out NaN scores and return mean
+                valid_scores = scores[~np.isnan(scores)]
+                return valid_scores.mean() if len(valid_scores) > 0 else 0.0
+            except Exception as e:
+                self.logger.warning(f"CV scoring failed: {e}")
+                return 0.0
         
-        # Run SFFS
-        sffs = SequentialFeatureSelector(
-            estimator=estimator,
-            n_features_to_select=max_features,
-            direction='forward',
-            scoring=cv_score_func,
-            cv=None,  # We handle CV in our scoring function
-            n_jobs=1   # We use n_jobs in cross_val_score instead
-        )
-        
+        # Run SFFS with error handling
         try:
+            sffs = SequentialFeatureSelector(
+                estimator=estimator,
+                n_features_to_select=max_features,
+                direction='forward',
+                scoring=cv_score_func,
+                cv=None,  # We handle CV in our scoring function
+                n_jobs=1   # We use n_jobs in cross_val_score instead
+            )
+            
             sffs.fit(X_sffs, y)
             selected_mask = sffs.get_support()
             selected_features_all = X_sffs.columns[selected_mask].tolist()
@@ -668,8 +681,10 @@ class EnhancedFeatureSelector:
             
         except Exception as e:
             self.logger.error(f"SFFS failed: {e}")
-            # Fallback: return top features by importance
-            return candidate_features[:max_features], 0.0
+            # Fallback: return top features by importance up to max_features
+            fallback_features = candidate_features[:max_features]
+            self.logger.info(f"SFFS fallback: returning {len(fallback_features)} top features")
+            return fallback_features, 0.0
     
     def _stage_d_early_stopping_evaluation(self, X: pd.DataFrame, y: pd.Series,
                                           base_features: List[str], candidate_features: List[str]) -> Tuple[List[str], float]:
@@ -679,9 +694,17 @@ class EnhancedFeatureSelector:
         if not candidate_features:
             return [], 0.0
         
+        # Check if we have enough samples for CV
+        min_samples_needed = self.cv_folds * 2
+        if len(X) < min_samples_needed:
+            self.logger.warning(f"Insufficient samples for CV in Stage D ({len(X)} < {min_samples_needed}), returning top candidates")
+            max_candidates = min(len(candidate_features), self.max_features - len(base_features))
+            return candidate_features[:max_candidates], 0.0
+        
         # Setup CV and estimator
-        cv = StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=42)
-        estimator = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+        actual_cv_folds = min(self.cv_folds, len(X) // 2)
+        cv = StratifiedKFold(n_splits=actual_cv_folds, shuffle=True, random_state=42)
+        estimator = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
         
         # Start with base features only
         current_features = base_features.copy()
@@ -692,7 +715,9 @@ class EnhancedFeatureSelector:
         # Add features one by one with early stopping
         remaining_candidates = candidate_features.copy()
         
-        for iteration in range(min(len(candidate_features), self.max_features - len(base_features))):
+        max_iterations = min(len(candidate_features), self.max_features - len(base_features))
+        
+        for iteration in range(max_iterations):
             if patience_counter >= self.early_stopping_patience:
                 self.logger.info(f"Early stopping triggered at iteration {iteration}")
                 break
@@ -701,7 +726,7 @@ class EnhancedFeatureSelector:
             best_iteration_score = best_score
             
             # Try adding each remaining candidate
-            for candidate in remaining_candidates:
+            for candidate in remaining_candidates[:]:  # Create copy for safe iteration
                 test_features = current_features + [candidate]
                 
                 if len(test_features) > self.max_features:
@@ -709,15 +734,22 @@ class EnhancedFeatureSelector:
                 
                 X_test = X[test_features]
                 
-                # Calculate CV score
-                if self.scoring_metric == 'balanced_accuracy':
-                    scores = cross_val_score(estimator, X_test, y, cv=cv, 
-                                           scoring='balanced_accuracy', n_jobs=-1)
-                else:
-                    scores = cross_val_score(estimator, X_test, y, cv=cv, 
-                                           scoring='f1_macro', n_jobs=-1)
-                
-                score = scores.mean()
+                # Calculate CV score with error handling
+                try:
+                    if self.scoring_metric == 'balanced_accuracy':
+                        scores = cross_val_score(estimator, X_test, y, cv=cv, 
+                                               scoring='balanced_accuracy', n_jobs=-1)
+                    else:
+                        scores = cross_val_score(estimator, X_test, y, cv=cv, 
+                                               scoring='f1_macro', n_jobs=-1)
+                    
+                    # Handle NaN scores
+                    valid_scores = scores[~np.isnan(scores)]
+                    score = valid_scores.mean() if len(valid_scores) > 0 else 0.0
+                    
+                except Exception as e:
+                    self.logger.warning(f"CV failed for candidate {candidate}: {e}")
+                    score = 0.0
                 
                 if score > best_iteration_score:
                     best_iteration_score = score
@@ -749,8 +781,16 @@ class EnhancedFeatureSelector:
         if not candidate_features:
             return [], 0.0
         
-        cv = StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=42)
-        estimator = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+        # Check if we have enough samples for CV
+        min_samples_needed = self.cv_folds * 2
+        if len(X) < min_samples_needed:
+            self.logger.warning(f"Insufficient samples for CV in Stage E ({len(X)} < {min_samples_needed}), returning all candidates")
+            max_candidates = min(len(candidate_features), self.max_features - len(base_features))
+            return candidate_features[:max_candidates], 0.0
+        
+        actual_cv_folds = min(self.cv_folds, len(X) // 2)
+        cv = StratifiedKFold(n_splits=actual_cv_folds, shuffle=True, random_state=42)
+        estimator = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
         
         best_score = 0.0
         best_subset = []
@@ -770,15 +810,22 @@ class EnhancedFeatureSelector:
             
             X_test = X[test_features]
             
-            # Calculate CV score
-            if self.scoring_metric == 'balanced_accuracy':
-                scores = cross_val_score(estimator, X_test, y, cv=cv, 
-                                       scoring='balanced_accuracy', n_jobs=-1)
-            else:
-                scores = cross_val_score(estimator, X_test, y, cv=cv, 
-                                       scoring='f1_macro', n_jobs=-1)
-            
-            score = scores.mean()
+            # Calculate CV score with error handling
+            try:
+                if self.scoring_metric == 'balanced_accuracy':
+                    scores = cross_val_score(estimator, X_test, y, cv=cv, 
+                                           scoring='balanced_accuracy', n_jobs=-1)
+                else:
+                    scores = cross_val_score(estimator, X_test, y, cv=cv, 
+                                           scoring='f1_macro', n_jobs=-1)
+                
+                # Handle NaN scores
+                valid_scores = scores[~np.isnan(scores)]
+                score = valid_scores.mean() if len(valid_scores) > 0 else 0.0
+                
+            except Exception as e:
+                self.logger.warning(f"CV failed for size {size}: {e}")
+                score = 0.0
             
             if score > best_score:
                 best_score = score
