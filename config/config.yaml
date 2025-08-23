@@ -93,6 +93,18 @@ feature_selection:
   target_features: 50
   correlation_threshold: 0.9  # Remove features with correlation > this
   importance_threshold: 0.001  # Minimum feature importance to keep
+  
+  # Advanced Adaptive Feature Selection
+  adaptive:
+    enabled: false  # Set to true to enable adaptive selection
+    initial_top_k: 80  # Stage A: Keep top K candidates by importance
+    min_features: 5    # Minimum total features (including base)
+    max_features: 50   # Maximum total features (including base) 
+    cv_folds: 5        # Cross-validation folds for SFFS
+    early_stopping_patience: 3     # Stop if no improvement for N rounds
+    early_stopping_epsilon: 0.002  # Minimum improvement threshold
+    scoring_metric: "balanced_accuracy"  # Options: balanced_accuracy, f1_macro
+    base_features: ["open", "high", "low", "close", "volume", "OHLC4"]  # Always included
 
 # Indicators Configuration
 indicators:

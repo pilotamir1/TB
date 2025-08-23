@@ -8,10 +8,11 @@ import logging
 import json
 from typing import Dict, List, Any, Tuple, Optional
 from datetime import datetime
-from sklearn.feature_selection import RFE
+from sklearn.feature_selection import RFE, SequentialFeatureSelector
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.inspection import permutation_importance
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
+from sklearn.metrics import balanced_accuracy_score, f1_score
 
 # Try to import SHAP
 try:
@@ -31,6 +32,21 @@ class EnhancedFeatureSelector:
         self.target_features = self.feature_config.get('target_features', 50)
         self.correlation_threshold = self.feature_config.get('correlation_threshold', 0.9)
         self.importance_threshold = self.feature_config.get('importance_threshold', 0.001)
+        
+        # Adaptive selection parameters
+        self.adaptive_config = self.feature_config.get('adaptive', {})
+        self.use_adaptive = self.adaptive_config.get('enabled', False)
+        self.initial_top_k = self.adaptive_config.get('initial_top_k', 80)
+        self.min_features = self.adaptive_config.get('min_features', 5)
+        self.max_features = self.adaptive_config.get('max_features', 50)
+        self.cv_folds = self.adaptive_config.get('cv_folds', 5)
+        self.early_stopping_patience = self.adaptive_config.get('early_stopping_patience', 3)
+        self.early_stopping_epsilon = self.adaptive_config.get('early_stopping_epsilon', 0.002)
+        self.scoring_metric = self.adaptive_config.get('scoring_metric', 'balanced_accuracy')
+        
+        # Base features that should always be included
+        self.base_feature_patterns = self.adaptive_config.get('base_features', 
+            ['open', 'high', 'low', 'close', 'volume', 'OHLC4'])
         
         self.selected_features = []
         self.feature_importances = {}
@@ -351,12 +367,120 @@ class EnhancedFeatureSelector:
             all_features = X.columns.tolist()[:self.target_features]
             return all_features, {'method': 'fallback_all', 'selected_count': len(all_features)}
     
+    def select_features_adaptive(self, X: pd.DataFrame, y: pd.Series,
+                                must_include: List[str] = None) -> Tuple[List[str], Dict[str, Any]]:
+        """Advanced adaptive feature selection with multi-stage reduction"""
+        try:
+            must_include = must_include or []
+            
+            self.logger.info("Starting adaptive feature selection with multi-stage reduction...")
+            
+            # Identify base features (OHLCV)
+            base_features = self._identify_base_features(X)
+            
+            # Add any explicitly required features to base features
+            all_base_features = list(set(base_features + must_include))
+            
+            # Get candidate pool (technical indicators minus base features)
+            candidate_features = self._get_candidate_features(X, all_base_features)
+            
+            if len(candidate_features) == 0:
+                self.logger.warning("No candidate features found, using only base features")
+                selected_features = all_base_features
+                selection_info = {
+                    'method': 'adaptive_no_candidates',
+                    'total_features': len(X.columns),
+                    'selected_count': len(selected_features),
+                    'base_features': all_base_features,
+                    'stages_completed': ['base_only'],
+                    'timestamp': datetime.now().isoformat()
+                }
+                return selected_features, selection_info
+            
+            # Stage A: Initial importance ranking
+            stage_a_features = self._stage_a_initial_importance(X, y, candidate_features)
+            
+            # Stage B: Correlation pruning
+            # Calculate importance for correlation pruning
+            X_stage_a = X[stage_a_features]
+            if self.method == 'shap':
+                importance_scores = self.calculate_shap_importance(X_stage_a, y)
+            elif self.method == 'permutation':
+                importance_scores = self.calculate_permutation_importance(X_stage_a, y)
+            else:
+                importance_scores = self.calculate_tree_importance(X_stage_a, y)
+            
+            stage_b_features = self._stage_b_correlation_pruning(X, stage_a_features, importance_scores)
+            
+            # Stage C: Sequential Forward Floating Selection with CV
+            stage_c_features, stage_c_score = self._stage_c_sffs_with_cv(X, y, stage_b_features, all_base_features)
+            
+            # Stage D: Early stopping evaluation
+            stage_d_features, stage_d_score = self._stage_d_early_stopping_evaluation(X, y, all_base_features, stage_c_features)
+            
+            # Stage E: Dynamic subset size selection
+            stage_e_features, stage_e_score = self._stage_e_dynamic_subset_selection(X, y, all_base_features, stage_d_features)
+            
+            # Final feature set: base features + best selected candidates
+            final_selected = all_base_features + stage_e_features
+            
+            # Store results
+            self.selected_features = final_selected
+            self.feature_importances = importance_scores
+            
+            selection_info = {
+                'method': 'adaptive_multi_stage',
+                'total_features': len(X.columns),
+                'selected_count': len(final_selected),
+                'base_features_count': len(all_base_features),
+                'candidate_features_count': len(stage_e_features),
+                'base_features': all_base_features,
+                'selected_candidates': stage_e_features,
+                'stages': {
+                    'stage_a_initial_count': len(stage_a_features),
+                    'stage_b_correlation_count': len(stage_b_features),
+                    'stage_c_sffs_count': len(stage_c_features),
+                    'stage_c_score': stage_c_score,
+                    'stage_d_early_stopping_count': len(stage_d_features),
+                    'stage_d_score': stage_d_score,
+                    'stage_e_dynamic_count': len(stage_e_features),
+                    'stage_e_score': stage_e_score
+                },
+                'parameters': {
+                    'initial_top_k': self.initial_top_k,
+                    'correlation_threshold': self.correlation_threshold,
+                    'min_features': self.min_features,
+                    'max_features': self.max_features,
+                    'cv_folds': self.cv_folds,
+                    'early_stopping_patience': self.early_stopping_patience,
+                    'early_stopping_epsilon': self.early_stopping_epsilon,
+                    'scoring_metric': self.scoring_metric
+                },
+                'final_score': stage_e_score,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            self.selection_metadata = selection_info
+            
+            self.logger.info(f"Adaptive feature selection completed: {len(final_selected)} features selected")
+            self.logger.info(f"Base features: {len(all_base_features)}, Selected candidates: {len(stage_e_features)}")
+            self.logger.info(f"Final CV score: {stage_e_score:.4f}")
+            
+            return final_selected, selection_info
+            
+        except Exception as e:
+            self.logger.error(f"Adaptive feature selection failed: {e}")
+            # Fallback to existing SHAP-based method
+            return self.select_features_shap_based(X, y, must_include)
+
     def select_features(self, X: pd.DataFrame, y: pd.Series, 
                        must_include: List[str] = None) -> Tuple[List[str], Dict[str, Any]]:
-        """Main feature selection method"""
+        """Main feature selection method - chooses between adaptive and traditional methods"""
         must_include = must_include or []
         
-        if self.method in ['shap', 'permutation']:
+        if self.use_adaptive:
+            return self.select_features_adaptive(X, y, must_include)
+        elif self.method in ['shap', 'permutation']:
             return self.select_features_shap_based(X, y, must_include)
         else:
             return self.select_features_rfe_fallback(X, y, must_include)
@@ -426,3 +550,242 @@ class EnhancedFeatureSelector:
         except Exception as e:
             self.logger.error(f"Failed to load selection artifact: {e}")
             return False
+    
+    def _identify_base_features(self, X: pd.DataFrame) -> List[str]:
+        """Identify base OHLCV features that should always be included"""
+        base_features = []
+        
+        for feature in X.columns:
+            for pattern in self.base_feature_patterns:
+                if feature.lower() == pattern.lower() or feature.lower().startswith(pattern.lower()):
+                    base_features.append(feature)
+                    break
+        
+        self.logger.info(f"Identified {len(base_features)} base features: {base_features}")
+        return base_features
+    
+    def _get_candidate_features(self, X: pd.DataFrame, base_features: List[str]) -> List[str]:
+        """Get candidate features for selection (excluding base features)"""
+        candidates = [col for col in X.columns if col not in base_features]
+        self.logger.info(f"Found {len(candidates)} candidate features for selection")
+        return candidates
+    
+    def _stage_a_initial_importance(self, X: pd.DataFrame, y: pd.Series, 
+                                   candidate_features: List[str]) -> List[str]:
+        """Stage A: Initial importance ranking -> keep top K0 candidates"""
+        self.logger.info(f"Stage A: Selecting top {self.initial_top_k} features by importance")
+        
+        X_candidates = X[candidate_features]
+        
+        # Calculate importance using specified method
+        if self.method == 'shap':
+            importance_scores = self.calculate_shap_importance(X_candidates, y)
+        elif self.method == 'permutation':
+            importance_scores = self.calculate_permutation_importance(X_candidates, y)
+        else:
+            importance_scores = self.calculate_tree_importance(X_candidates, y)
+        
+        # Sort by importance and take top K0
+        sorted_features = sorted(importance_scores.items(), key=lambda x: x[1], reverse=True)
+        top_features = [f[0] for f in sorted_features[:self.initial_top_k]]
+        
+        self.logger.info(f"Stage A completed: {len(top_features)} features selected")
+        return top_features
+    
+    def _stage_b_correlation_pruning(self, X: pd.DataFrame, candidate_features: List[str],
+                                   importance_scores: Dict[str, float]) -> List[str]:
+        """Stage B: Correlation pruning (|rho| > threshold)"""
+        self.logger.info(f"Stage B: Correlation pruning with threshold {self.correlation_threshold}")
+        
+        X_candidates = X[candidate_features]
+        correlation_matrix = self.calculate_correlation_matrix(X_candidates)
+        
+        # Remove correlated features based on importance
+        remaining_features = self.remove_correlated_features(importance_scores, correlation_matrix)
+        
+        # Filter to only include candidates that were in our input
+        remaining_features = [f for f in remaining_features if f in candidate_features]
+        
+        self.logger.info(f"Stage B completed: {len(remaining_features)} features after correlation pruning")
+        return remaining_features
+    
+    def _stage_c_sffs_with_cv(self, X: pd.DataFrame, y: pd.Series, 
+                             candidate_features: List[str], base_features: List[str]) -> Tuple[List[str], float]:
+        """Stage C: Sequential Forward Floating Selection with cross-validation"""
+        self.logger.info("Stage C: Starting SFFS with cross-validation")
+        
+        if len(candidate_features) == 0:
+            self.logger.warning("No candidate features for SFFS")
+            return [], 0.0
+        
+        # Prepare data with base features always included + candidates
+        all_features_for_sffs = base_features + candidate_features
+        X_sffs = X[all_features_for_sffs]
+        
+        # Create estimator for SFFS
+        estimator = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+        
+        # Setup cross-validation
+        cv = StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=42)
+        
+        # Configure SFFS
+        max_features = min(self.max_features - len(base_features), len(candidate_features))
+        max_features = max(1, max_features)  # At least 1 feature to select
+        
+        # Create scoring function
+        def cv_score_func(estimator, X_subset, y_subset):
+            if self.scoring_metric == 'balanced_accuracy':
+                scores = cross_val_score(estimator, X_subset, y_subset, cv=cv, 
+                                       scoring='balanced_accuracy', n_jobs=-1)
+            else:  # f1_macro
+                scores = cross_val_score(estimator, X_subset, y_subset, cv=cv, 
+                                       scoring='f1_macro', n_jobs=-1)
+            return scores.mean()
+        
+        # Run SFFS
+        sffs = SequentialFeatureSelector(
+            estimator=estimator,
+            n_features_to_select=max_features,
+            direction='forward',
+            scoring=cv_score_func,
+            cv=None,  # We handle CV in our scoring function
+            n_jobs=1   # We use n_jobs in cross_val_score instead
+        )
+        
+        try:
+            sffs.fit(X_sffs, y)
+            selected_mask = sffs.get_support()
+            selected_features_all = X_sffs.columns[selected_mask].tolist()
+            
+            # Split back into base and selected candidates  
+            selected_candidates = [f for f in selected_features_all if f not in base_features]
+            
+            # Get final score
+            final_score = cv_score_func(estimator, X_sffs[selected_features_all], y)
+            
+            self.logger.info(f"Stage C completed: {len(selected_candidates)} candidate features selected, CV score: {final_score:.4f}")
+            return selected_candidates, final_score
+            
+        except Exception as e:
+            self.logger.error(f"SFFS failed: {e}")
+            # Fallback: return top features by importance
+            return candidate_features[:max_features], 0.0
+    
+    def _stage_d_early_stopping_evaluation(self, X: pd.DataFrame, y: pd.Series,
+                                          base_features: List[str], candidate_features: List[str]) -> Tuple[List[str], float]:
+        """Stage D: Early stopping with iterative feature evaluation"""
+        self.logger.info("Stage D: Early stopping evaluation")
+        
+        if not candidate_features:
+            return [], 0.0
+        
+        # Setup CV and estimator
+        cv = StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=42)
+        estimator = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+        
+        # Start with base features only
+        current_features = base_features.copy()
+        best_score = 0.0
+        best_features = current_features.copy()
+        patience_counter = 0
+        
+        # Add features one by one with early stopping
+        remaining_candidates = candidate_features.copy()
+        
+        for iteration in range(min(len(candidate_features), self.max_features - len(base_features))):
+            if patience_counter >= self.early_stopping_patience:
+                self.logger.info(f"Early stopping triggered at iteration {iteration}")
+                break
+            
+            best_candidate = None
+            best_iteration_score = best_score
+            
+            # Try adding each remaining candidate
+            for candidate in remaining_candidates:
+                test_features = current_features + [candidate]
+                
+                if len(test_features) > self.max_features:
+                    continue
+                
+                X_test = X[test_features]
+                
+                # Calculate CV score
+                if self.scoring_metric == 'balanced_accuracy':
+                    scores = cross_val_score(estimator, X_test, y, cv=cv, 
+                                           scoring='balanced_accuracy', n_jobs=-1)
+                else:
+                    scores = cross_val_score(estimator, X_test, y, cv=cv, 
+                                           scoring='f1_macro', n_jobs=-1)
+                
+                score = scores.mean()
+                
+                if score > best_iteration_score:
+                    best_iteration_score = score
+                    best_candidate = candidate
+            
+            # Check if we found improvement
+            if best_candidate and best_iteration_score > best_score + self.early_stopping_epsilon:
+                current_features.append(best_candidate)
+                remaining_candidates.remove(best_candidate)
+                best_score = best_iteration_score
+                best_features = current_features.copy()
+                patience_counter = 0
+                self.logger.info(f"Iteration {iteration}: Added {best_candidate}, score: {best_score:.4f}")
+            else:
+                patience_counter += 1
+                self.logger.info(f"Iteration {iteration}: No improvement, patience: {patience_counter}")
+        
+        # Return only the candidate features (not base features)
+        selected_candidates = [f for f in best_features if f not in base_features]
+        
+        self.logger.info(f"Stage D completed: {len(selected_candidates)} features, final score: {best_score:.4f}")
+        return selected_candidates, best_score
+    
+    def _stage_e_dynamic_subset_selection(self, X: pd.DataFrame, y: pd.Series,
+                                         base_features: List[str], candidate_features: List[str]) -> Tuple[List[str], float]:
+        """Stage E: Dynamic subset size selection (5..50 range, best performing subset)"""
+        self.logger.info("Stage E: Dynamic subset size selection")
+        
+        if not candidate_features:
+            return [], 0.0
+        
+        cv = StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=42)
+        estimator = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+        
+        best_score = 0.0
+        best_subset = []
+        best_size = 0
+        
+        # Try different subset sizes
+        min_candidate_features = max(0, self.min_features - len(base_features))
+        max_candidate_features = min(len(candidate_features), self.max_features - len(base_features))
+        
+        for size in range(min_candidate_features, max_candidate_features + 1):
+            if size <= 0:
+                continue
+                
+            # Take top 'size' features from candidates
+            test_candidates = candidate_features[:size]
+            test_features = base_features + test_candidates
+            
+            X_test = X[test_features]
+            
+            # Calculate CV score
+            if self.scoring_metric == 'balanced_accuracy':
+                scores = cross_val_score(estimator, X_test, y, cv=cv, 
+                                       scoring='balanced_accuracy', n_jobs=-1)
+            else:
+                scores = cross_val_score(estimator, X_test, y, cv=cv, 
+                                       scoring='f1_macro', n_jobs=-1)
+            
+            score = scores.mean()
+            
+            if score > best_score:
+                best_score = score
+                best_subset = test_candidates.copy()
+                best_size = len(test_features)
+            
+            self.logger.info(f"Size {len(test_features)}: {size} candidates, score: {score:.4f}")
+        
+        self.logger.info(f"Stage E completed: Best subset size {best_size}, score: {best_score:.4f}")
+        return best_subset, best_score
