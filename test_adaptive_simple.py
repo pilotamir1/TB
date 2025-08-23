@@ -34,7 +34,7 @@ def test_individual_stages():
                     'cv_folds': 2,
                     'early_stopping_patience': 1,
                     'early_stopping_epsilon': 0.05,
-                    'scoring_metric': 'balanced_accuracy',
+                    'scoring_metric': 'f1_macro',
                     'base_features': ['open', 'high', 'low', 'close', 'volume']
                 }
             }

@@ -103,7 +103,7 @@ feature_selection:
     cv_folds: 5        # Cross-validation folds for SFFS
     early_stopping_patience: 3     # Stop if no improvement for N rounds
     early_stopping_epsilon: 0.002  # Minimum improvement threshold
-    scoring_metric: "balanced_accuracy"  # Options: balanced_accuracy, f1_macro
+    scoring_metric: "f1_macro"  # Options: balanced_accuracy, f1_macro
     base_features: ["open", "high", "low", "close", "volume", "OHLC4"]  # Always included
 
 # Indicators Configuration

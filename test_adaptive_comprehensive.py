@@ -35,7 +35,7 @@ def test_comprehensive_adaptive_selection():
                     'cv_folds': 3,
                     'early_stopping_patience': 2,
                     'early_stopping_epsilon': 0.01,
-                    'scoring_metric': 'balanced_accuracy',
+                    'scoring_metric': 'f1_macro',
                     'base_features': ['open', 'high', 'low', 'close', 'volume', 'OHLC4']
                 }
             }

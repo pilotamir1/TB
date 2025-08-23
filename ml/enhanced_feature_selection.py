@@ -42,7 +42,20 @@ class EnhancedFeatureSelector:
         self.cv_folds = self.adaptive_config.get('cv_folds', 5)
         self.early_stopping_patience = self.adaptive_config.get('early_stopping_patience', 3)
         self.early_stopping_epsilon = self.adaptive_config.get('early_stopping_epsilon', 0.002)
-        self.scoring_metric = self.adaptive_config.get('scoring_metric', 'balanced_accuracy')
+        
+        # Initialize logger first
+        self.logger = logging.getLogger(__name__)
+        
+        # Handle scoring metric with mapping for legacy values
+        raw_metric = self.adaptive_config.get('scoring_metric', 'f1_macro')
+        self.scoring_metric = self._map_scoring_metric(raw_metric)
+        
+        # Adjust early stopping parameters for F1 metrics due to higher variance
+        if self.scoring_metric == 'f1_macro':
+            # Use more lenient early stopping for F1 metrics
+            self.early_stopping_epsilon = min(self.early_stopping_epsilon, 0.001)
+            self.early_stopping_patience = max(self.early_stopping_patience, 5)
+            self.logger.info(f"Adjusted early stopping for F1 metric: epsilon={self.early_stopping_epsilon}, patience={self.early_stopping_patience}")
         
         # Base features that should always be included
         self.base_feature_patterns = self.adaptive_config.get('base_features', 
@@ -52,8 +65,15 @@ class EnhancedFeatureSelector:
         self.feature_importances = {}
         self.correlation_matrix = None
         self.selection_metadata = {}
-        
-        self.logger = logging.getLogger(__name__)
+    
+    def _map_scoring_metric(self, raw_metric: str) -> str:
+        """Map scoring metric names for consistency and legacy support"""
+        metric_mapping = {
+            'macro_f1': 'f1_macro',
+            'f1_macro': 'f1_macro',
+            'balanced_accuracy': 'balanced_accuracy'
+        }
+        return metric_mapping.get(raw_metric, raw_metric)
     
     def calculate_shap_importance(self, X: pd.DataFrame, y: pd.Series, 
                                  sample_size: int = 1000) -> Dict[str, float]:
@@ -289,6 +309,7 @@ class EnhancedFeatureSelector:
                 'correlation_threshold': self.correlation_threshold,
                 'importance_threshold': self.importance_threshold,
                 'target_features': self.target_features,
+                'metric_name': self.scoring_metric,
                 'timestamp': datetime.now().isoformat(),
                 'top_features_by_importance': [
                     {'feature': f, 'importance': feature_importance.get(f, 0)}
@@ -351,6 +372,7 @@ class EnhancedFeatureSelector:
                 'must_include_count': len(must_include),
                 'rfe_selected_count': len(rfe_selected),
                 'target_features': self.target_features,
+                'metric_name': self.scoring_metric,
                 'timestamp': datetime.now().isoformat()
             }
             
@@ -457,6 +479,7 @@ class EnhancedFeatureSelector:
                     'scoring_metric': self.scoring_metric
                 },
                 'final_score': stage_e_score,
+                'metric_name': self.scoring_metric,
                 'timestamp': datetime.now().isoformat()
             }
             
