@@ -152,7 +152,12 @@ class ConfigLoader:
                 'learning_rate': 0.05,
                 'early_stopping_rounds': 100,
                 'subsample': 0.8,
-                'colsample_bytree': 0.8
+                'colsample_bytree': 0.8,
+                'colsample_bylevel': 0.8,
+                'reg_alpha': 0.1,
+                'reg_lambda': 1.0,
+                'min_child_weight': 3,
+                'gamma': 0.1
             },
             'catboost': {
                 'iterations': 1500,

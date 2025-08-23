@@ -1,0 +1,3 @@
+2025-08-23 13:30:10,107 - test_fixes - INFO - Testing emoji handling:     
+2025-08-23 13:30:10,107 - test_fixes - WARNING - Generic calculation used for TestIndicator - may need specific implementation
+2025-08-23 13:30:10,107 - ml - INFO - ML_EVENT: test_event

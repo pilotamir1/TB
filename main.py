@@ -37,8 +37,16 @@ class TradingBotApplication:
     """Main application class that orchestrates all components"""
     
     def __init__(self):
-        self.setup_logging()
-        self.logger = logging.getLogger(__name__)
+        # Initialize enhanced logging first
+        from config.config_loader import load_config
+        from utils.logging import initialize_logging, get_logger
+        
+        # Load configuration
+        config = load_config()
+        
+        # Initialize enhanced logging system
+        self.logger_system = initialize_logging(config)
+        self.logger = get_logger(__name__)
         
         # Components
         self.trading_engine = None
@@ -53,27 +61,7 @@ class TradingBotApplication:
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
         
-        self.logger.info("AI Trading Bot Application initialized")
-    
-    def setup_logging(self):
-        """Setup application logging"""
-        # Create logs directory
-        os.makedirs(os.path.dirname(LOGGING_CONFIG['file']), exist_ok=True)
-        
-        # Configure logging
-        logging.basicConfig(
-            level=getattr(logging, LOGGING_CONFIG['level']),
-            format=LOGGING_CONFIG['format'],
-            handlers=[
-                logging.FileHandler(LOGGING_CONFIG['file']),
-                logging.StreamHandler(sys.stdout)
-            ]
-        )
-        
-        # Reduce noise from external libraries
-        logging.getLogger('requests').setLevel(logging.WARNING)
-        logging.getLogger('urllib3').setLevel(logging.WARNING)
-        logging.getLogger('werkzeug').setLevel(logging.WARNING)
+        self.logger.info("AI Trading Bot Application initialized with enhanced logging")
     
     def signal_handler(self, signum, frame):
         """Handle shutdown signals"""
@@ -162,8 +150,27 @@ class TradingBotApplication:
             return False
     
     def log_system_event(self, level: str, module: str, message: str, details: str = None):
-        """Log system event to database"""
+        """Log system event to database and enhanced logger"""
         try:
+            # Use enhanced logger for structured events
+            if hasattr(self, 'logger_system'):
+                if level.upper() == 'INFO':
+                    self.logger_system.log_ml_event('system_event', {
+                        'level': level,
+                        'module': module,
+                        'message': message,
+                        'details': details
+                    })
+                else:
+                    # For non-info events, log as trading event
+                    self.logger_system.log_trading_event('system_event', 'SYSTEM', {
+                        'level': level,
+                        'module': module,
+                        'message': message,
+                        'details': details
+                    })
+            
+            # Also log to database if available
             session = db_connection.get_session()
             
             log_entry = SystemLog(

@@ -88,7 +88,7 @@ class EnhancedTradingModel:
         self.logger.info("Initialized CatBoost model")
     
     def _initialize_xgboost(self):
-        """Initialize XGBoost model"""
+        """Initialize XGBoost model with enhanced overfitting prevention"""
         xgboost_config = self.config.get('xgboost', {})
         
         self.model = xgb.XGBClassifier(
@@ -98,11 +98,20 @@ class EnhancedTradingModel:
             early_stopping_rounds=xgboost_config.get('early_stopping_rounds', 100),
             subsample=xgboost_config.get('subsample', 0.8),
             colsample_bytree=xgboost_config.get('colsample_bytree', 0.8),
+            colsample_bylevel=xgboost_config.get('colsample_bylevel', 0.8),  # Additional regularization
+            reg_alpha=xgboost_config.get('reg_alpha', 0.1),  # L1 regularization
+            reg_lambda=xgboost_config.get('reg_lambda', 1.0),  # L2 regularization
+            min_child_weight=xgboost_config.get('min_child_weight', 3),  # Prevent overfitting
+            gamma=xgboost_config.get('gamma', 0.1),  # Minimum split loss
+            objective='multi:softprob',
+            eval_metric='mlogloss',
             random_state=self.ml_config.get('random_state', 42),
-            verbosity=0  # Reduce noise
+            verbosity=0,  # Reduce noise
+            n_jobs=-1,  # Use all CPU cores
+            tree_method='hist'  # Faster training
         )
         
-        self.logger.info("Initialized XGBoost model")
+        self.logger.info("Initialized XGBoost model with enhanced regularization")
     
     def _initialize_random_forest(self):
         """Initialize Random Forest model"""
@@ -349,6 +358,57 @@ class EnhancedTradingModel:
             self.logger.info(f"Validation accuracy: {metrics['val_accuracy']:.4f}")
         
         return metrics
+    
+    def evaluate_test_set(self, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, Any]:
+        """Evaluate model on independent test set"""
+        try:
+            if not self.is_trained:
+                raise ValueError("Model must be trained before evaluation")
+            
+            # Encode test labels
+            y_test_encoded = self.label_encoder.transform(y_test)
+            
+            # Make predictions
+            y_test_pred = self.model.predict(X_test)
+            y_test_proba = self.model.predict_proba(X_test)
+            
+            # Calculate metrics
+            test_accuracy = accuracy_score(y_test_encoded, y_test_pred)
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                y_test_encoded, y_test_pred, average='weighted'
+            )
+            
+            # Confusion matrix
+            cm = confusion_matrix(y_test_encoded, y_test_pred)
+            
+            test_metrics = {
+                'test_accuracy': float(test_accuracy),
+                'test_precision': float(precision),
+                'test_recall': float(recall),
+                'test_f1_score': float(f1),
+                'test_confusion_matrix': cm.tolist(),
+                'test_samples': len(X_test)
+            }
+            
+            # ROC AUC for test set
+            try:
+                if len(np.unique(y_test_encoded)) > 2:
+                    auc_score = roc_auc_score(y_test_encoded, y_test_proba, multi_class='ovr')
+                else:
+                    auc_score = roc_auc_score(y_test_encoded, y_test_proba[:, 1])
+                test_metrics['test_roc_auc'] = float(auc_score)
+            except Exception as e:
+                self.logger.warning(f"Could not calculate test ROC AUC: {e}")
+            
+            # Update training metadata with test results
+            if hasattr(self, 'training_metadata'):
+                self.training_metadata.update(test_metrics)
+            
+            return test_metrics
+            
+        except Exception as e:
+            self.logger.error(f"Test set evaluation failed: {e}")
+            return {'test_accuracy': 0.0, 'test_error': str(e)}
     
     def predict(self, X: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """Generate trading predictions with calibrated probabilities"""
