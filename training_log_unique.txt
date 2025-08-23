@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/home/runner/work/TB/TB/enhanced_main.py", line 34, in <module>
+    from trading.enhanced_engine import EnhancedTradingEngine
+  File "/home/runner/work/TB/TB/trading/__init__.py", line 1, in <module>
+    from trading.engine import TradingEngine
+  File "/home/runner/work/TB/TB/trading/engine.py", line 8, in <module>
+    from ml.model import TradingModel
+  File "/home/runner/work/TB/TB/ml/__init__.py", line 2, in <module>
+    from ml.trainer import ModelTrainer
+  File "/home/runner/work/TB/TB/ml/trainer.py", line 15, in <module>
+    from database.connection import db_connection
+  File "/home/runner/work/TB/TB/database/__init__.py", line 1, in <module>
+    from database.connection import db_connection
+  File "/home/runner/work/TB/TB/database/connection.py", line 1, in <module>
+    from sqlalchemy import create_engine, text
+ModuleNotFoundError: No module named 'sqlalchemy'
