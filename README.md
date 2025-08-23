@@ -127,7 +127,7 @@ Access the dashboard at `http://localhost:5000` to:
 Key settings in `config/settings.py`:
 - `TRADING_CONFIG`: Demo balance, symbols, timeframe, confidence threshold
 - `TP_SL_CONFIG`: Take profit and stop loss levels
-- `ML_CONFIG`: Training data size, RFE parameters, selected features count
+- `ML_CONFIG`: Training data size, adaptive feature selection, F1 macro optimization
 - `COINEX_CONFIG`: API credentials for live trading
 
 ## Architecture
@@ -243,7 +243,8 @@ Advanced position management with:
 ### Model Customization
 - Switch between RandomForest, GradientBoosting, LogisticRegression
 - Adjust hyperparameters in `ml/model.py`
-- Modify feature selection criteria in `ml/feature_selection.py`
+- Modify feature selection criteria in `ml/enhanced_feature_selection.py`
+- Cross-validation optimization uses F1 macro metric by default
 
 ### Exchange Integration
 - Implement new exchange by extending base API pattern

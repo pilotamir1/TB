@@ -75,11 +75,28 @@ NEUTRAL: -2.0% < return < +2.0% # No clear direction
 
 ## Feature Selection Pipeline
 
-### SHAP-Based Selection
+### Traditional SHAP-Based Selection
 1. **Importance Calculation**: SHAP values for feature importance
 2. **Correlation Analysis**: Remove features with correlation > 0.9
 3. **Importance Filtering**: Keep features with importance > 0.001
 4. **Target Selection**: Top N features based on importance
+
+### Advanced Adaptive Selection (NEW)
+When `adaptive.enabled = true`, the system uses a sophisticated multi-stage pipeline:
+
+1. **Base Feature Preservation**: Always includes OHLCV/foundational features
+2. **Stage A - Initial Importance**: RandomForest/SHAP ranking → top K0 candidates (e.g., 80)
+3. **Stage B - Correlation Pruning**: Remove highly correlated features (|ρ| > 0.9)
+4. **Stage C - SFFS with CV**: Sequential Forward Floating Selection with stratified k-fold CV optimizing F1 macro score
+5. **Stage D - Early Stopping**: Stop if F1 macro improvement < epsilon over patience rounds
+6. **Stage E - Dynamic Subset**: Find optimal subset size (5-50 range) via F1 macro performance testing
+
+**Key Benefits:**
+- Dynamic feature count (not fixed at 50)
+- Better generalization through cross-validation with F1 macro optimization
+- Preserved domain knowledge (base features always included)
+- Early stopping prevents overfitting (adaptive for F1 metric variance)
+- Robust fallback mechanisms
 
 ### Fallback Methods
 - **Permutation Importance**: When SHAP is unavailable
@@ -230,6 +247,14 @@ ml:
   model_type: "catboost"  # or "xgboost"
   labeling:
     up_threshold: 0.02
+    down_threshold: -0.02
+
+feature_selection:
+  adaptive:
+    enabled: true
+    scoring_metric: "f1_macro"  # Default optimization metric
+    early_stopping_patience: 5  # Adjusted for F1 variance
+    early_stopping_epsilon: 0.001  # Adjusted for F1 variance
     down_threshold: -0.02
 ```
 
