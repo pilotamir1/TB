@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Trading Bot Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-running { background-color: #28a745; }
+        .status-stopped { background-color: #dc3545; }
+        .status-training { background-color: #ffc107; }
+        
+        .metric-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .signal-card {
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+        }
+        
+        .signal-buy { border-left-color: #28a745; }
+        .signal-sell { border-left-color: #dc3545; }
+        .signal-hold { border-left-color: #6c757d; }
+        
+        .confidence-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .confidence-fill {
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+        }
+        
+        .position-profit { color: #28a745; }
+        .position-loss { color: #dc3545; }
+        
+        .log-entry {
+            font-size: 0.875rem;
+            padding: 8px 12px;
+            margin-bottom: 5px;
+            border-radius: 4px;
+        }
+        
+        .log-info { background-color: #d1ecf1; color: #0c5460; }
+        .log-warning { background-color: #fff3cd; color: #856404; }
+        .log-error { background-color: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="fas fa-robot me-2"></i>AI Trading Bot Dashboard
+            </span>
+            <div class="d-flex align-items-center">
+                <span id="system-status" class="me-3">
+                    <span class="status-indicator status-stopped"></span>
+                    <span>System Status: <span id="status-text">Initializing...</span></span>
+                </span>
+                <button class="btn btn-outline-light btn-sm me-2" onclick="toggleTrading()">
+                    <i class="fas fa-play" id="trading-icon"></i>
+                    <span id="trading-text">Start Trading</span>
+                </button>
+                <button class="btn btn-warning btn-sm" onclick="retrainModel()">
+                    <i class="fas fa-sync"></i> Retrain
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Training Progress Alert -->
+        <div id="training-alert" class="alert alert-info alert-dismissible fade" role="alert" style="display: none;">
+            <div class="d-flex align-items-center">
+                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                <div>
+                    <strong>Model Training in Progress</strong><br>
+                    <span id="training-message">Starting training...</span>
+                    <div class="progress mt-2" style="height: 10px;">
+                        <div id="training-progress-bar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Metrics Row -->
+        <div class="row">
+            <div class="col-md-3">
+                <div class="metric-card">
+                    <h6><i class="fas fa-wallet me-2"></i>Portfolio Value</h6>
+                    <h3 id="portfolio-value">$0.00</h3>
+                    <small>Demo Mode</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="metric-card">
+                    <h6><i class="fas fa-chart-line me-2"></i>Daily P&L</h6>
+                    <h3 id="daily-pnl">$0.00</h3>
+                    <small id="daily-pnl-pct">0.00%</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="metric-card">
+                    <h6><i class="fas fa-list me-2"></i>Active Positions</h6>
+                    <h3 id="active-positions">0</h3>
+                    <small>Open trades</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="metric-card">
+                    <h6><i class="fas fa-brain me-2"></i>Model Accuracy</h6>
+                    <h3 id="model-accuracy">0%</h3>
+                    <small id="model-version">No model</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Row -->
+        <div class="row">
+            <!-- Positions and Signals -->
+            <div class="col-lg-8">
+                <!-- Positions -->
+                <div class="card mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-coins me-2"></i>Active Positions</h5>
+                        <span class="badge bg-primary" id="positions-count">0</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="positions-container">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-chart-line fa-3x mb-3"></i>
+                                <p>No active positions</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Signals -->
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-signal me-2"></i>Recent Trading Signals</h5>
+                    </div>
+                    <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                        <div id="signals-container">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-satellite-dish fa-3x mb-3"></i>
+                                <p>No signals generated yet</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sidebar -->
+            <div class="col-lg-4">
+                <!-- Market Overview -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5><i class="fas fa-globe me-2"></i>Market Overview</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="market-overview">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-spinner fa-spin"></i> Loading...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Model Information -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5><i class="fas fa-brain me-2"></i>AI Model Info</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="model-info">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-spinner fa-spin"></i> Loading...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Settings -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5><i class="fas fa-cog me-2"></i>Settings</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Demo Balance ($)</label>
+                            <input type="number" class="form-control" id="demo-balance" min="1" step="1" value="100">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Confidence Threshold (%)</label>
+                            <input type="range" class="form-range" id="confidence-threshold" min="50" max="95" step="5" value="70">
+                            <small class="text-muted">Current: <span id="confidence-value">70%</span></small>
+                        </div>
+                        <button class="btn btn-primary btn-sm w-100" onclick="updateSettings()">
+                            <i class="fas fa-save me-2"></i>Save Settings
+                        </button>
+                    </div>
+                </div>
+
+                <!-- System Logs -->
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-file-alt me-2"></i>System Logs</h5>
+                    </div>
+                    <div class="card-body" style="max-height: 300px; overflow-y: auto;">
+                        <div id="logs-container">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-spinner fa-spin"></i> Loading...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Global state
+        let isTrading = false;
+        let updateInterval;
+        
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeDashboard();
+            startRealTimeUpdates();
+            
+            // Initialize confidence threshold slider
+            const confidenceSlider = document.getElementById('confidence-threshold');
+            const confidenceValue = document.getElementById('confidence-value');
+            
+            confidenceSlider.addEventListener('input', function() {
+                confidenceValue.textContent = this.value + '%';
+            });
+        });
+        
+        // Initialize dashboard
+        function initializeDashboard() {
+            updateSystemStatus();
+            updatePositions();
+            updateSignals();
+            updateMarketOverview();
+            updateModelInfo();
+            updateLogs();
+        }
+        
+        // Start real-time updates
+        function startRealTimeUpdates() {
+            updateInterval = setInterval(function() {
+                updateSystemStatus();
+                updatePositions();
+                updateSignals();
+                updateMarketOverview();
+            }, 5000); // Update every 5 seconds
+            
+            // Update logs less frequently
+            setInterval(updateLogs, 30000); // Update every 30 seconds
+        }
+        
+        // Update system status
+        async function updateSystemStatus() {
+            try {
+                const response = await fetch('/api/system/status');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const status = data.system_status;
+                    const training = data.training_progress;
+                    
+                    // Update status indicator
+                    const statusIndicator = document.querySelector('#system-status .status-indicator');
+                    const statusText = document.getElementById('status-text');
+                    
+                    if (status.is_running) {
+                        statusIndicator.className = 'status-indicator status-running';
+                        statusText.textContent = 'Running';
+                        isTrading = true;
+                        updateTradingButton();
+                    } else {
+                        statusIndicator.className = 'status-indicator status-stopped';
+                        statusText.textContent = 'Stopped';
+                        isTrading = false;
+                        updateTradingButton();
+                    }
+                    
+                    // Update main metrics
+                    document.getElementById('portfolio-value').textContent = 
+                        '$' + (status.demo_balance + (status.unrealized_pnl || 0)).toFixed(2);
+                    document.getElementById('active-positions').textContent = status.active_positions || 0;
+                    
+                    // Update training progress
+                    if (training && training.stage !== 'completed' && training.stage !== 'failed') {
+                        showTrainingProgress(training);
+                    } else {
+                        hideTrainingProgress();
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating system status:', error);
+            }
+        }
+        
+        // Show training progress
+        function showTrainingProgress(training) {
+            const alert = document.getElementById('training-alert');
+            const message = document.getElementById('training-message');
+            const progressBar = document.getElementById('training-progress-bar');
+            
+            alert.style.display = 'block';
+            alert.classList.add('show');
+            message.textContent = training.message;
+            progressBar.style.width = training.progress + '%';
+        }
+        
+        // Hide training progress
+        function hideTrainingProgress() {
+            const alert = document.getElementById('training-alert');
+            alert.classList.remove('show');
+            setTimeout(() => {
+                alert.style.display = 'none';
+            }, 300);
+        }
+        
+        // Update positions
+        async function updatePositions() {
+            try {
+                const response = await fetch('/api/positions');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const container = document.getElementById('positions-container');
+                    const countBadge = document.getElementById('positions-count');
+                    
+                    countBadge.textContent = data.positions.length;
+                    
+                    if (data.positions.length === 0) {
+                        container.innerHTML = `
+                            <div class="text-center text-muted">
+                                <i class="fas fa-chart-line fa-3x mb-3"></i>
+                                <p>No active positions</p>
+                            </div>
+                        `;
+                    } else {
+                        let positionsHtml = '';
+                        let totalPnL = 0;
+                        
+                        data.positions.forEach(position => {
+                            const pnlClass = position.pnl >= 0 ? 'position-profit' : 'position-loss';
+                            const pnlIcon = position.pnl >= 0 ? 'fa-arrow-up' : 'fa-arrow-down';
+                            totalPnL += position.pnl;
+                            
+                            positionsHtml += `
+                                <div class="card mb-2">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-start">
+                                            <div>
+                                                <h6 class="mb-1">${position.symbol} ${position.side}</h6>
+                                                <small class="text-muted">Entry: $${position.entry_price.toFixed(4)}</small>
+                                                <br>
+                                                <small class="text-muted">Current: $${position.current_price.toFixed(4)}</small>
+                                            </div>
+                                            <div class="text-end">
+                                                <div class="${pnlClass}">
+                                                    <i class="fas ${pnlIcon}"></i>
+                                                    $${position.pnl.toFixed(2)} (${position.pnl_percentage.toFixed(2)}%)
+                                                </div>
+                                                <button class="btn btn-danger btn-sm mt-1" onclick="closePosition(${position.id})">
+                                                    <i class="fas fa-times"></i> Close
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="mt-2">
+                                            <small class="text-muted">
+                                                SL: $${position.current_sl.toFixed(4)} | 
+                                                TP1: $${position.tp1_price.toFixed(4)} ${position.tp1_hit ? '✓' : ''}
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        
+                        container.innerHTML = positionsHtml;
+                        
+                        // Update daily P&L
+                        const pnlClass = totalPnL >= 0 ? 'position-profit' : 'position-loss';
+                        document.getElementById('daily-pnl').textContent = '$' + totalPnL.toFixed(2);
+                        document.getElementById('daily-pnl').className = pnlClass;
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating positions:', error);
+            }
+        }
+        
+        // Update signals
+        async function updateSignals() {
+            try {
+                const response = await fetch('/api/signals');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const container = document.getElementById('signals-container');
+                    
+                    if (data.signals.length === 0) {
+                        container.innerHTML = `
+                            <div class="text-center text-muted">
+                                <i class="fas fa-satellite-dish fa-3x mb-3"></i>
+                                <p>No signals generated yet</p>
+                            </div>
+                        `;
+                    } else {
+                        let signalsHtml = '';
+                        
+                        data.signals.slice(0, 10).forEach(signal => { // Show last 10 signals
+                            const signalClass = `signal-${signal.signal_type.toLowerCase()}`;
+                            const timestamp = new Date(signal.timestamp).toLocaleString();
+                            
+                            signalsHtml += `
+                                <div class="signal-card ${signalClass}">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>${signal.symbol}</strong>
+                                            <span class="badge bg-${signal.signal_type === 'BUY' ? 'success' : signal.signal_type === 'SELL' ? 'danger' : 'secondary'} ms-2">
+                                                ${signal.signal_type}
+                                            </span>
+                                        </div>
+                                        <small class="text-muted">${timestamp}</small>
+                                    </div>
+                                    <div class="mt-2">
+                                        <small>Price: $${signal.price.toFixed(4)}</small>
+                                        <div class="confidence-bar mt-1">
+                                            <div class="confidence-fill" style="width: ${signal.confidence * 100}%"></div>
+                                        </div>
+                                        <small class="text-muted">Confidence: ${(signal.confidence * 100).toFixed(1)}%</small>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        
+                        container.innerHTML = signalsHtml;
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating signals:', error);
+            }
+        }
+        
+        // Update market overview
+        async function updateMarketOverview() {
+            try {
+                const response = await fetch('/api/market/overview');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const container = document.getElementById('market-overview');
+                    let overviewHtml = '';
+                    
+                    Object.entries(data.market_overview).forEach(([symbol, info]) => {
+                        const changeClass = info.change_24h >= 0 ? 'text-success' : 'text-danger';
+                        const changeIcon = info.change_24h >= 0 ? 'fa-arrow-up' : 'fa-arrow-down';
+                        
+                        overviewHtml += `
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div>
+                                    <strong>${symbol}</strong><br>
+                                    <small class="text-muted">$${info.price.toFixed(4)}</small>
+                                </div>
+                                <div class="text-end ${changeClass}">
+                                    <i class="fas ${changeIcon}"></i>
+                                    ${info.change_24h.toFixed(2)}%
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    container.innerHTML = overviewHtml || '<div class="text-muted">No market data available</div>';
+                }
+            } catch (error) {
+                console.error('Error updating market overview:', error);
+            }
+        }
+        
+        // Update model info
+        async function updateModelInfo() {
+            try {
+                const response = await fetch('/api/model/info');
+                const data = await response.json();
+                
+                if (data.success && data.current_model) {
+                    const model = data.current_model;
+                    const container = document.getElementById('model-info');
+                    
+                    document.getElementById('model-accuracy').textContent = 
+                        model.accuracy ? (model.accuracy * 100).toFixed(1) + '%' : 'N/A';
+                    document.getElementById('model-version').textContent = model.model_version || 'No model';
+                    
+                    container.innerHTML = `
+                        <div class="mb-2">
+                            <small class="text-muted">Version:</small><br>
+                            <strong>${model.model_version}</strong>
+                        </div>
+                        <div class="mb-2">
+                            <small class="text-muted">Status:</small><br>
+                            <span class="badge bg-${model.status === 'COMPLETED' ? 'success' : 'warning'}">${model.status}</span>
+                        </div>
+                        <div class="mb-2">
+                            <small class="text-muted">Accuracy:</small><br>
+                            <strong>${model.accuracy ? (model.accuracy * 100).toFixed(1) + '%' : 'N/A'}</strong>
+                        </div>
+                        <div class="mb-2">
+                            <small class="text-muted">Selected Features:</small><br>
+                            <strong>${model.selected_indicators || 0}</strong>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error updating model info:', error);
+            }
+        }
+        
+        // Update logs
+        async function updateLogs() {
+            try {
+                const response = await fetch('/api/logs');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const container = document.getElementById('logs-container');
+                    
+                    if (data.logs.length === 0) {
+                        container.innerHTML = '<div class="text-muted">No logs available</div>';
+                    } else {
+                        let logsHtml = '';
+                        
+                        data.logs.slice(0, 20).forEach(log => {
+                            const logClass = `log-${log.level.toLowerCase()}`;
+                            const timestamp = new Date(log.timestamp).toLocaleTimeString();
+                            
+                            logsHtml += `
+                                <div class="log-entry ${logClass}">
+                                    <small class="text-muted">${timestamp} [${log.module}]</small><br>
+                                    ${log.message}
+                                </div>
+                            `;
+                        });
+                        
+                        container.innerHTML = logsHtml;
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating logs:', error);
+            }
+        }
+        
+        // Trading controls
+        function updateTradingButton() {
+            const button = document.querySelector('[onclick="toggleTrading()"]');
+            const icon = document.getElementById('trading-icon');
+            const text = document.getElementById('trading-text');
+            
+            if (isTrading) {
+                button.className = 'btn btn-outline-danger btn-sm me-2';
+                icon.className = 'fas fa-stop';
+                text.textContent = 'Stop Trading';
+            } else {
+                button.className = 'btn btn-outline-success btn-sm me-2';
+                icon.className = 'fas fa-play';
+                text.textContent = 'Start Trading';
+            }
+        }
+        
+        async function toggleTrading() {
+            try {
+                const endpoint = isTrading ? '/api/trading/stop' : '/api/trading/start';
+                const response = await fetch(endpoint, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Status will be updated by next system status update
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error toggling trading:', error);
+                alert('Error toggling trading');
+            }
+        }
+        
+        async function retrainModel() {
+            if (confirm('Are you sure you want to retrain the AI model? This may take several minutes.')) {
+                try {
+                    const response = await fetch('/api/model/retrain', { method: 'POST' });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        alert('Model retraining started. Check the training progress above.');
+                        updateModelInfo();
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                } catch (error) {
+                    console.error('Error retraining model:', error);
+                    alert('Error starting model retrain');
+                }
+            }
+        }
+        
+        async function closePosition(positionId) {
+            if (confirm('Are you sure you want to close this position?')) {
+                try {
+                    const response = await fetch(`/api/position/${positionId}/close`, { method: 'POST' });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        updatePositions();
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                } catch (error) {
+                    console.error('Error closing position:', error);
+                    alert('Error closing position');
+                }
+            }
+        }
+        
+        async function updateSettings() {
+            try {
+                const demoBalance = document.getElementById('demo-balance').value;
+                const confidenceThreshold = document.getElementById('confidence-threshold').value;
+                
+                const response = await fetch('/api/settings/update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        demo_balance: parseFloat(demoBalance),
+                        confidence_threshold: parseFloat(confidenceThreshold) / 100
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Settings updated successfully');
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error updating settings:', error);
+                alert('Error updating settings');
+            }
+        }
+    </script>
+</body>
+</html>
