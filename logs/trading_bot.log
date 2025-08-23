@@ -5,3 +5,6 @@
 2025-08-23 13:31:41,051 - demo - WARNING - Generic calculation used for DemoIndicator - may need specific implementation
 2025-08-23 13:31:41,051 - demo - WARNING - Generic calculation used for DemoIndicator - may need specific implementation
 2025-08-23 13:31:41,052 - demo - INFO -  Enhanced logging working perfectly!
+2025-08-23 22:55:23,243 - test_fixes - INFO - Testing emoji handling:     
+2025-08-23 22:55:23,243 - test_fixes - WARNING - Generic calculation used for TestIndicator - may need specific implementation
+2025-08-23 22:55:23,243 - ml - INFO - ML_EVENT: test_event
