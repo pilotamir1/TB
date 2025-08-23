@@ -510,38 +510,85 @@
         // Update model info
         async function updateModelInfo() {
             try {
-                const response = await fetch('/api/model/info');
+                const response = await fetch('/api/model/status');
                 const data = await response.json();
                 
-                if (data.success && data.current_model) {
-                    const model = data.current_model;
+                if (data.success) {
                     const container = document.getElementById('model-info');
                     
-                    document.getElementById('model-accuracy').textContent = 
-                        model.accuracy ? (model.accuracy * 100).toFixed(1) + '%' : 'N/A';
-                    document.getElementById('model-version').textContent = model.model_version || 'No model';
+                    // Update accuracy display
+                    const accuracyElement = document.getElementById('model-accuracy');
+                    if (accuracyElement) {
+                        accuracyElement.textContent = data.val_accuracy ? 
+                            (data.val_accuracy * 100).toFixed(1) + '%' : 'N/A';
+                    }
                     
+                    // Update version display
+                    const versionElement = document.getElementById('model-version');
+                    if (versionElement) {
+                        versionElement.textContent = data.model_version || 'No model';
+                    }
+                    
+                    // Update complete model info panel
                     container.innerHTML = `
-                        <div class="mb-2">
-                            <small class="text-muted">Version:</small><br>
-                            <strong>${model.model_version}</strong>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-2">
+                                    <small class="text-muted">Model Type:</small><br>
+                                    <strong>${data.model_type?.toUpperCase() || 'N/A'}</strong>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Version:</small><br>
+                                    <strong>${data.model_version || 'No model'}</strong>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Training Status:</small><br>
+                                    <span class="badge bg-${data.is_trained ? 'success' : 'warning'}">${data.is_trained ? 'TRAINED' : 'NOT TRAINED'}</span>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Validation Accuracy:</small><br>
+                                    <strong>${data.val_accuracy ? (data.val_accuracy * 100).toFixed(1) + '%' : 'N/A'}</strong>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-2">
+                                    <small class="text-muted">Features Used:</small><br>
+                                    <strong>${data.feature_count || 0}</strong>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Training Samples:</small><br>
+                                    <strong>${data.training_samples ? data.training_samples.toLocaleString() : 'N/A'}</strong>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">F1 Score:</small><br>
+                                    <strong>${data.f1_score ? data.f1_score.toFixed(3) : 'N/A'}</strong>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Last Trained:</small><br>
+                                    <small>${data.last_trained_at !== 'unknown' ? new Date(data.last_trained_at).toLocaleString() : 'Never'}</small>
+                                </div>
+                            </div>
                         </div>
-                        <div class="mb-2">
-                            <small class="text-muted">Status:</small><br>
-                            <span class="badge bg-${model.status === 'COMPLETED' ? 'success' : 'warning'}">${model.status}</span>
-                        </div>
-                        <div class="mb-2">
-                            <small class="text-muted">Accuracy:</small><br>
-                            <strong>${model.accuracy ? (model.accuracy * 100).toFixed(1) + '%' : 'N/A'}</strong>
-                        </div>
-                        <div class="mb-2">
-                            <small class="text-muted">Selected Features:</small><br>
-                            <strong>${model.selected_indicators || 0}</strong>
+                    `;
+                } else {
+                    // Handle case where model is not available
+                    const container = document.getElementById('model-info');
+                    container.innerHTML = `
+                        <div class="text-center text-muted">
+                            <i class="fas fa-exclamation-triangle"></i><br>
+                            ${data.error || 'Model not available'}
                         </div>
                     `;
                 }
             } catch (error) {
                 console.error('Error updating model info:', error);
+                const container = document.getElementById('model-info');
+                container.innerHTML = `
+                    <div class="text-center text-danger">
+                        <i class="fas fa-exclamation-triangle"></i><br>
+                        Error loading model info
+                    </div>
+                `;
             }
         }
         
@@ -613,6 +660,78 @@
             }
         }
         
+        // Update system settings
+        async function updateDemoBalance() {
+            const balanceInput = document.getElementById('demo-balance');
+            const newBalance = parseFloat(balanceInput.value);
+            
+            if (isNaN(newBalance) || newBalance <= 0) {
+                alert('Please enter a valid balance greater than 0');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/settings/update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        demo_balance: newBalance
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    console.log('Demo balance updated successfully');
+                    // Update system status to reflect new balance
+                    updateSystemStatus();
+                } else {
+                    alert('Error updating demo balance: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error updating demo balance:', error);
+                alert('Error updating demo balance');
+            }
+        }
+        
+        async function updateConfidenceThreshold() {
+            const thresholdInput = document.getElementById('confidence-threshold');
+            const newThreshold = parseFloat(thresholdInput.value);
+            
+            if (isNaN(newThreshold) || newThreshold < 0.1 || newThreshold > 0.99) {
+                alert('Please enter a valid threshold between 0.1 and 0.99');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/settings/update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        confidence_threshold: newThreshold
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    console.log('Confidence threshold updated successfully');
+                    // Update system status to reflect new threshold
+                    updateSystemStatus();
+                } else {
+                    alert('Error updating confidence threshold: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error updating confidence threshold:', error);
+                alert('Error updating confidence threshold');
+            }
+        }
+        
+        // Enhanced retrain function with progress monitoring
         async function retrainModel() {
             if (confirm('Are you sure you want to retrain the AI model? This may take several minutes.')) {
                 try {
@@ -621,6 +740,8 @@
                     
                     if (data.success) {
                         alert('Model retraining started. Check the training progress above.');
+                        // Start monitoring training progress
+                        monitorTrainingProgress();
                         updateModelInfo();
                     } else {
                         alert('Error: ' + data.error);
@@ -630,6 +751,42 @@
                     alert('Error starting model retrain');
                 }
             }
+        }
+        
+        // Monitor training progress
+        async function monitorTrainingProgress() {
+            const checkProgress = async () => {
+                try {
+                    const response = await fetch('/api/training/status');
+                    const data = await response.json();
+                    
+                    if (data.success && data.training) {
+                        const training = data.training;
+                        
+                        if (training.stage !== 'idle' && training.stage !== 'completed' && training.stage !== 'failed') {
+                            showTrainingProgress(training);
+                            // Continue monitoring
+                            setTimeout(checkProgress, 2000);
+                        } else if (training.stage === 'completed') {
+                            showTrainingProgress(training);
+                            setTimeout(() => {
+                                hideTrainingProgress();
+                                updateModelInfo(); // Refresh model info after completion
+                            }, 3000);
+                        } else if (training.stage === 'failed') {
+                            showTrainingProgress(training);
+                            setTimeout(hideTrainingProgress, 5000);
+                        } else {
+                            hideTrainingProgress();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error checking training progress:', error);
+                }
+            };
+            
+            // Start monitoring
+            checkProgress();
         }
         
         async function closePosition(positionId) {
@@ -649,6 +806,36 @@
                 }
             }
         }
+        
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initial updates
+            updateSystemStatus();
+            updateModelInfo();
+            updateTradingSignals();
+            updatePositions();
+            updateLogs();
+            
+            // Setup confidence threshold slider
+            const confidenceSlider = document.getElementById('confidence-threshold');
+            const confidenceValue = document.getElementById('confidence-value');
+            
+            if (confidenceSlider && confidenceValue) {
+                confidenceSlider.addEventListener('input', function() {
+                    confidenceValue.textContent = this.value + '%';
+                });
+                
+                // Update display on load
+                confidenceValue.textContent = confidenceSlider.value + '%';
+            }
+            
+            // Auto-refresh intervals
+            setInterval(updateSystemStatus, 5000);    // Every 5 seconds
+            setInterval(updateTradingSignals, 10000); // Every 10 seconds
+            setInterval(updatePositions, 15000);      // Every 15 seconds
+            setInterval(updateModelInfo, 30000);      // Every 30 seconds (model doesn't change often)
+            setInterval(updateLogs, 20000);           // Every 20 seconds
+        });
         
         async function updateSettings() {
             try {
@@ -670,6 +857,8 @@
                 
                 if (data.success) {
                     alert('Settings updated successfully');
+                    // Refresh system status to show updated values
+                    updateSystemStatus();
                 } else {
                     alert('Error: ' + data.error);
                 }

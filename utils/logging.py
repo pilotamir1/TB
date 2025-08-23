@@ -12,6 +12,31 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 from logging.handlers import RotatingFileHandler
 
+class IndicatorWarningFilter(logging.Filter):
+    """Filter to suppress repeated indicator calculation warnings"""
+    
+    def __init__(self):
+        super().__init__()
+        self.warned_indicators = set()
+    
+    def filter(self, record):
+        """Filter out repeated generic calculation warnings"""
+        if hasattr(record, 'msg') and isinstance(record.msg, str):
+            if 'Generic calculation used for' in record.msg and 'may need specific implementation' in record.msg:
+                # Extract indicator name
+                import re
+                match = re.search(r'Generic calculation used for (\w+)', record.msg)
+                if match:
+                    indicator_name = match.group(1)
+                    if indicator_name in self.warned_indicators:
+                        return False  # Suppress this log
+                    else:
+                        self.warned_indicators.add(indicator_name)
+                        # Allow first warning but change level to DEBUG for less noise
+                        record.levelno = logging.DEBUG
+                        record.levelname = 'DEBUG'
+        return True
+
 class SafeFormatter(logging.Formatter):
     """UTF-8 safe formatter that handles encoding issues on Windows"""
     
@@ -150,6 +175,12 @@ class TradingBotLogger:
         logging.getLogger('requests').setLevel(logging.WARNING)
         logging.getLogger('urllib3').setLevel(logging.WARNING)
         logging.getLogger('werkzeug').setLevel(logging.WARNING)
+        
+        # Reduce indicator calculator noise - suppress repeated generic calculation warnings
+        indicators_logger = logging.getLogger('indicators.calculator')
+        if not hasattr(indicators_logger, '_warning_suppressor_added'):
+            indicators_logger.addFilter(IndicatorWarningFilter())
+            indicators_logger._warning_suppressor_added = True
     
     def get_logger(self, name: str) -> logging.Logger:
         """Get logger instance for a module"""

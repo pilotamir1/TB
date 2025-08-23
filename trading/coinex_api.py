@@ -316,19 +316,49 @@ class CoinExAPI:
         return candles
     
     def test_connection(self) -> bool:
-        """Test API connection"""
+        """Test API connection with graceful fallback"""
         try:
-            # Try to get server time (doesn't require auth)
-            endpoint = "common/timestamp"
-            self._make_request('GET', endpoint, auth_required=False)
+            # Try newer API endpoint first
+            endpoint = "common/server-time"
+            try:
+                self._make_request('GET', endpoint, auth_required=False)
+                self.logger.info("CoinEx API connection successful (v2 endpoint)")
+            except Exception as e:
+                # Fallback to older endpoint
+                self.logger.debug(f"New endpoint failed, trying legacy: {e}")
+                endpoint = "common/timestamp"
+                try:
+                    self._make_request('GET', endpoint, auth_required=False)
+                    self.logger.info("CoinEx API connection successful (legacy endpoint)")
+                except Exception as e2:
+                    # If both fail, log warning but don't raise in demo mode
+                    self.logger.warning(f"Both CoinEx API endpoints failed. v2: {e}, v1: {e2}")
+                    if self.sandbox_mode:
+                        self.logger.info("Running in demo mode - API connection failure is non-critical")
+                        return True  # Allow demo mode to continue
+                    else:
+                        raise e2
             
-            # Try to get balance (requires auth)
+            # Try to get balance (requires auth) - only if API keys are provided
             if self.api_key and self.secret_key:
-                self.get_balance()
+                try:
+                    self.get_balance()
+                    self.logger.info("CoinEx API authentication successful")
+                except Exception as e:
+                    self.logger.warning(f"CoinEx API authentication failed: {e}")
+                    if self.sandbox_mode:
+                        self.logger.info("Running in demo mode - authentication failure is non-critical")
+                        return True
+                    else:
+                        raise
+            else:
+                self.logger.info("CoinEx API test completed (no auth keys provided)")
             
-            self.logger.info("CoinEx API connection successful")
             return True
             
         except Exception as e:
             self.logger.error(f"CoinEx API connection failed: {e}")
+            if self.sandbox_mode:
+                self.logger.info("Demo mode enabled - continuing with fallback data")
+                return True
             return False

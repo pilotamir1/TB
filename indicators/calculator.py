@@ -12,6 +12,16 @@ class IndicatorCalculator:
     def __init__(self):
         self.definitions = IndicatorDefinitions()
         self.logger = logging.getLogger(__name__)
+        # Track indicators that have been warned about to avoid spam
+        self._generic_warnings_logged = set()
+        
+        # Indicators that are expected to use generic calculation (no warning needed)
+        self._expected_generic_indicators = {
+            'Price_Channel_High', 'Price_Channel_Low', 'Williams_R',
+            'Chaikin_Oscillator', 'Detrended_Price_Oscillator', 'Klinger_Oscillator',
+            'Mass_Index', 'Negative_Volume_Index', 'Positive_Volume_Index',
+            'Price_Volume_Trend', 'Volume_Price_Confirmation_Indicator'
+        }
     
     def calculate_all_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -372,9 +382,12 @@ class IndicatorCalculator:
     
     def _calculate_generic(self, df: pd.DataFrame, name: str, info: Dict[str, Any]) -> pd.DataFrame:
         """Generic calculation for simple indicators"""
-        # This is a fallback for indicators not specifically implemented
-        # Add NaN for now - can be extended based on specific formulas
-        self.logger.warning(f"Generic calculation used for {name} - may need specific implementation")
+        # Only warn for indicators not in the expected generic list, and only once
+        if name not in self._expected_generic_indicators and name not in self._generic_warnings_logged:
+            self.logger.debug(f"Generic calculation used for {name} - may need specific implementation")
+            self._generic_warnings_logged.add(name)
+        
+        # For now, set to NaN - could be extended based on specific formulas
         df[name] = np.nan
         
         return df

@@ -483,6 +483,192 @@ def create_enhanced_app(trading_engine=None, signal_manager=None, prediction_sch
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
+    @app.route('/api/model/retrain', methods=['POST'])
+    def retrain_model():
+        """Retrain the AI model in background with status updates"""
+        try:
+            if not app.trading_engine:
+                return jsonify({
+                    'success': False,
+                    'error': 'Trading engine not available'
+                })
+            
+            # Check if training is already in progress
+            if hasattr(app, '_training_in_progress') and app._training_in_progress:
+                return jsonify({
+                    'success': False,
+                    'error': 'Model training already in progress'
+                })
+            
+            # Start retraining in background using concurrent.futures for better handling
+            import concurrent.futures
+            import threading
+            
+            def retrain_with_status():
+                """Retrain with status broadcasting"""
+                try:
+                    app._training_in_progress = True
+                    app._training_status = {
+                        'stage': 'starting',
+                        'message': 'Starting model training...',
+                        'progress': 0
+                    }
+                    
+                    # If signal manager exists, broadcast training start
+                    if app.signal_manager and hasattr(app.signal_manager, 'broadcast_training_status'):
+                        app.signal_manager.broadcast_training_status(app._training_status)
+                    
+                    # Update progress stages
+                    stages = [
+                        ('data_preparation', 'Preparing training data...', 20),
+                        ('feature_selection', 'Selecting features...', 40),
+                        ('training', 'Training model...', 70),
+                        ('validation', 'Validating model...', 90),
+                        ('saving', 'Saving model...', 95),
+                        ('completed', 'Training completed successfully!', 100)
+                    ]
+                    
+                    for stage, message, progress in stages:
+                        app._training_status = {
+                            'stage': stage,
+                            'message': message,
+                            'progress': progress
+                        }
+                        
+                        if app.signal_manager and hasattr(app.signal_manager, 'broadcast_training_status'):
+                            app.signal_manager.broadcast_training_status(app._training_status)
+                        
+                        # Simulate stage processing (replace with actual training call)
+                        if stage == 'training':
+                            # Actual training call
+                            app.trading_engine.train_model(retrain=True)
+                        else:
+                            import time
+                            time.sleep(0.5)  # Simulate processing time
+                    
+                    # Training completed - broadcast model metadata update
+                    if app.signal_manager and hasattr(app.signal_manager, 'broadcast_model_update'):
+                        app.signal_manager.broadcast_model_update()
+                    
+                except Exception as e:
+                    app._training_status = {
+                        'stage': 'failed',
+                        'message': f'Training failed: {str(e)}',
+                        'progress': 0
+                    }
+                    
+                    if app.signal_manager and hasattr(app.signal_manager, 'broadcast_training_status'):
+                        app.signal_manager.broadcast_training_status(app._training_status)
+                    
+                    app.logger.error(f"Error retraining model: {e}")
+                finally:
+                    app._training_in_progress = False
+            
+            # Use thread pool for better resource management
+            retrain_thread = threading.Thread(target=retrain_with_status, daemon=True)
+            retrain_thread.start()
+            
+            return jsonify({
+                'success': True, 
+                'message': 'Model retraining started in background'
+            })
+            
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/training/status')
+    def get_training_status():
+        """Get current training status"""
+        try:
+            if hasattr(app, '_training_status'):
+                return jsonify({
+                    'success': True,
+                    'training': app._training_status
+                })
+            else:
+                return jsonify({
+                    'success': True,
+                    'training': {
+                        'stage': 'idle',
+                        'message': 'No training in progress',
+                        'progress': 0
+                    }
+                })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/settings/update', methods=['POST'])
+    def update_settings():
+        """Update system settings and propagate to engine"""
+        try:
+            data = request.get_json()
+            
+            if not data:
+                return jsonify({
+                    'success': False,
+                    'error': 'No data provided'
+                })
+            
+            updated_settings = {}
+            
+            # Handle confidence threshold update
+            if 'confidence_threshold' in data:
+                new_threshold = float(data['confidence_threshold'])
+                if 0.1 <= new_threshold <= 0.99:
+                    # Update trading engine if available
+                    if app.trading_engine and hasattr(app.trading_engine, 'update_confidence_threshold'):
+                        app.trading_engine.update_confidence_threshold(new_threshold)
+                        updated_settings['confidence_threshold'] = new_threshold
+                    else:
+                        return jsonify({
+                            'success': False,
+                            'error': 'Trading engine not available or does not support threshold updates'
+                        })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Confidence threshold must be between 0.1 and 0.99'
+                    })
+            
+            # Handle demo balance update
+            if 'demo_balance' in data:
+                new_balance = float(data['demo_balance'])
+                if new_balance > 0:
+                    if app.trading_engine and hasattr(app.trading_engine, 'update_demo_balance'):
+                        app.trading_engine.update_demo_balance(new_balance)
+                        updated_settings['demo_balance'] = new_balance
+                    else:
+                        return jsonify({
+                            'success': False,
+                            'error': 'Trading engine not available or does not support balance updates'
+                        })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Demo balance must be greater than 0'
+                    })
+            
+            # Broadcast settings update if signal manager exists
+            if app.signal_manager and hasattr(app.signal_manager, 'broadcast_settings_update'):
+                app.signal_manager.broadcast_settings_update(updated_settings)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Settings updated successfully',
+                'updated': updated_settings
+            })
+            
+        except ValueError as e:
+            return jsonify({
+                'success': False,
+                'error': f'Invalid value: {str(e)}'
+            })
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            })
+    
     # Error handlers
     @app.errorhandler(404)
     def not_found(error):

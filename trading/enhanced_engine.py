@@ -179,24 +179,51 @@ class EnhancedTradingEngine:
             X = labeled_data[selected_features]
             y = labels
             
-            # Split data
+            # Split data into train/val/test for better evaluation
             from sklearn.model_selection import train_test_split
-            X_train, X_val, y_train, y_val = train_test_split(
+            
+            # First split: train+val (80%) / test (20%)
+            X_trainval, X_test, y_trainval, y_test = train_test_split(
                 X, y, test_size=0.2, stratify=y, random_state=42
             )
+            
+            # Second split: train (64%) / val (16%)
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_trainval, y_trainval, test_size=0.2, stratify=y_trainval, random_state=42
+            )
+            
+            self.logger.info(f"Data split - Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
             
             # Train enhanced model
             self.logger.info(f"Training {self.model.model_type} model with {len(selected_features)} features...")
             
             training_metrics = self.model.train(X_train, y_train, X_val, y_val)
             
+            # Evaluate on test set for final performance assessment
+            if len(X_test) > 0:
+                test_metrics = self.model.evaluate_test_set(X_test, y_test)
+                training_metrics.update(test_metrics)
+                self.logger.info(f"Test accuracy: {test_metrics.get('test_accuracy', 0):.4f}")
+            
             # Save model
             model_path = self.model.save_model()
             
-            # Log training results
+            # Log training results with overfitting detection
+            train_acc = training_metrics.get('train_accuracy', 0)
+            val_acc = training_metrics.get('val_accuracy', 0)
+            test_acc = training_metrics.get('test_accuracy', val_acc)  # Use val if no test
+            
             self.logger.info(f"Model training completed successfully")
-            self.logger.info(f"Training accuracy: {training_metrics.get('train_accuracy', 0):.4f}")
-            self.logger.info(f"Validation accuracy: {training_metrics.get('val_accuracy', 0):.4f}")
+            self.logger.info(f"Training accuracy: {train_acc:.4f}")
+            self.logger.info(f"Validation accuracy: {val_acc:.4f}")
+            self.logger.info(f"Test accuracy: {test_acc:.4f}")
+            
+            # Detect potential overfitting
+            overfitting_threshold = 0.05  # 5% difference threshold
+            if train_acc - val_acc > overfitting_threshold:
+                self.logger.warning(f"Potential overfitting detected: train_acc ({train_acc:.4f}) >> val_acc ({val_acc:.4f})")
+                self.logger.warning("Consider: reducing model complexity, adding regularization, or collecting more data")
+            
             self.logger.info(f"Model saved: {model_path}")
             
             # Log to structured events
