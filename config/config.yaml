@@ -89,7 +89,7 @@ catboost:
 
 # Feature Selection Configuration
 feature_selection:
-  mode: "rfe"  # Options: rfe, shap, hybrid, dynamic
+  mode: "dynamic"  # Options: rfe, shap, hybrid, dynamic
   method: "rfe"  # legacy key kept for compatibility
   target_features: 30
   correlation_threshold: 0.9  # Remove features with correlation > this
