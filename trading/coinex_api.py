@@ -76,6 +76,25 @@ class CoinExAPI:
                 self.logger.error(f"API error: {result}")
                 raise Exception(f"CoinEx API error: {result.get('message', 'Unknown error')}")
                 
+        except requests.exceptions.HTTPError as e:
+            # Handle 404 errors with v2 fallback for specific endpoints
+            if response.status_code == 404 and ('time' in endpoint or 'timestamp' in endpoint):
+                self.logger.info(f"404 on {endpoint}, attempting v2 fallback")
+                if 'v1/time' in url or '/timestamp' in url:
+                    try:
+                        # Try v2 server-time endpoint
+                        v2_url = url.replace(endpoint, 'v2/common/server-time')
+                        response = self.session.get(v2_url, params=params, headers=headers, timeout=10)
+                        response.raise_for_status()
+                        result = response.json()
+                        if result.get('code') == 0:
+                            self.logger.info("Successfully used v2 fallback endpoint")
+                            return result.get('data', {})
+                    except Exception as fallback_error:
+                        self.logger.warning(f"v2 fallback also failed: {fallback_error}")
+            
+            self.logger.error(f"HTTP request failed: {e}")
+            raise
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Request failed: {e}")
             raise

@@ -91,7 +91,7 @@ catboost:
 feature_selection:
   mode: "dynamic"  # Options: rfe, shap, hybrid, dynamic
   method: "rfe"  # legacy key kept for compatibility
-  target_features: 30
+  target_features: 50
   correlation_threshold: 0.9  # Remove features with correlation > this
   importance_threshold: 0.001  # Minimum feature importance to keep
   
