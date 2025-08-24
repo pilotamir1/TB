@@ -168,10 +168,20 @@ class ConfigLoader:
                 'auto_class_weights': 'Balanced'
             },
             'feature_selection': {
+                'mode': 'dynamic',
                 'method': 'shap',
                 'target_features': 50,
                 'correlation_threshold': 0.9,
-                'importance_threshold': 0.001
+                'importance_threshold': 0.001,
+                'dynamic': {
+                    'min_features': 20,
+                    'drop_fraction': 0.05,
+                    'corr_threshold': 0.95,
+                    'tolerance': 0.003,
+                    'metric': 'macro_f1',
+                    'cv_splits': 3,
+                    'max_iterations': 50
+                }
             },
             'logging': {
                 'level': 'INFO',
