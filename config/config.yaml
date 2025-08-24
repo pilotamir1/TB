@@ -89,20 +89,20 @@ catboost:
 
 # Feature Selection Configuration
 feature_selection:
-  method: "shap"  # Options: rfe, shap, permutation
-  target_features: 50
+  method: "rfe"  # Options: rfe, shap, permutation
+  target_features: 30
   correlation_threshold: 0.9  # Remove features with correlation > this
   importance_threshold: 0.001  # Minimum feature importance to keep
   
   # Advanced Adaptive Feature Selection
   adaptive:
-    enabled: false  # Set to true to enable adaptive selection
-    initial_top_k: 80  # Stage A: Keep top K candidates by importance
+    enabled: false  # Set to true to enable adaptive selection (disabled for performance)
+    initial_top_k: 40  # Stage A: Keep top K candidates by importance (reduced from 80)
     min_features: 5    # Minimum total features (including base)
-    max_features: 50   # Maximum total features (including base) 
-    cv_folds: 5        # Cross-validation folds for SFFS
-    early_stopping_patience: 3     # Stop if no improvement for N rounds
-    early_stopping_epsilon: 0.002  # Minimum improvement threshold
+    max_features: 30   # Maximum total features (including base) (reduced from 50)
+    cv_folds: 3        # Cross-validation folds for SFFS (reduced from 5)
+    early_stopping_patience: 2     # Stop if no improvement for N rounds (reduced from 3)
+    early_stopping_epsilon: 0.005  # Minimum improvement threshold (increased from 0.002)
     scoring_metric: "f1_macro"  # Options: balanced_accuracy, f1_macro
     base_features: ["open", "high", "low", "close", "volume", "OHLC4"]  # Always included
 
@@ -118,7 +118,7 @@ indicators:
 
 # Prediction Scheduler Configuration
 prediction:
-  scheduler_interval: 120  # seconds
+  scheduler_interval: 60  # seconds (every 1 minute)
   intracandle_predictions: true
   min_data_points: 200  # Minimum data points required for prediction
 
