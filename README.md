@@ -6,7 +6,7 @@ This is a comprehensive AI-powered cryptocurrency trading bot built for automate
 
 ### 🤖 AI Model
 - **Machine Learning**: RandomForest, GradientBoosting, and LogisticRegression models
-- **Feature Selection**: Recursive Feature Elimination (RFE) to select 30-50 best indicators from 196+ available
+- **Feature Selection**: Dynamic adaptive selection optimizes feature count based on macro F1 performance, or traditional RFE/SHAP methods
 - **Training Data**: Uses 58,000+ historical OHLCV data points from MySQL database
 - **Confidence Threshold**: Only executes trades with >70% model confidence
 - **Auto-Retraining**: Continuous model improvement based on market conditions
@@ -110,7 +110,7 @@ python main.py
 The system will:
 1. Initialize database connections
 2. Start the web dashboard on http://localhost:5000
-3. Begin model training with RFE feature selection
+3. Begin model training with intelligent feature selection
 4. Start real-time data fetching
 5. Begin trading analysis (demo mode by default)
 
@@ -127,7 +127,7 @@ Access the dashboard at `http://localhost:5000` to:
 Key settings in `config/settings.py`:
 - `TRADING_CONFIG`: Demo balance, symbols, timeframe, confidence threshold
 - `TP_SL_CONFIG`: Take profit and stop loss levels
-- `ML_CONFIG`: Training data size, adaptive feature selection, F1 macro optimization
+- `ML_CONFIG`: Training data size, dynamic feature selection, macro F1 optimization
 - `COINEX_CONFIG`: API credentials for live trading
 
 ## Architecture
@@ -171,12 +171,32 @@ TB/
 
 ## Key Features Detail
 
-### RFE Feature Selection
-The system automatically selects the best 30-50 indicators from 196+ available using:
-- Recent market data (last 1000 samples) for relevance
-- Recursive Feature Elimination with RandomForest
-- Mandatory inclusion of prerequisite indicators
-- Continuous re-evaluation based on market conditions
+### Dynamic Feature Selection
+The system intelligently selects features using multiple approaches:
+
+**Dynamic Mode (Performance-Driven)**:
+- No fixed feature limit - optimizes for macro F1 score
+- Correlation-aware pruning removes redundant features
+- Iterative selection with tolerance-based early stopping
+- Preserves essential OHLCV and required indicators
+- Provides detailed selection history for analysis
+
+**Traditional Modes**:
+- **RFE**: Recursive Feature Elimination with RandomForest
+- **SHAP**: SHAP-based importance ranking
+- **Hybrid**: Combination of RFE and statistical selection
+
+**Configuration**:
+```yaml
+feature_selection:
+  mode: "dynamic"  # or "rfe", "shap", "hybrid"
+  dynamic:
+    min_features: 20
+    metric: 'macro_f1'
+    tolerance: 0.003
+```
+
+See [docs/dynamic_feature_selection.md](docs/dynamic_feature_selection.md) for detailed documentation.
 
 ### TP/SL Management
 Advanced position management with:

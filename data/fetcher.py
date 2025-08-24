@@ -34,6 +34,10 @@ class DataFetcher:
         self.latest_prices = {}
         self.latest_data_cache = {}
         
+        # Throttling for data fetch spam prevention
+        self.last_fetch_times = {}  # symbol -> timestamp
+        self.min_fetch_interval = 30  # minimum 30 seconds between fetches for same symbol
+        
         self.logger.info("Data fetcher initialized")
     
     def start_real_time_updates(self):
@@ -56,14 +60,37 @@ class DataFetcher:
         
         self.logger.info("Real-time data updates stopped")
     
+    def _should_fetch_data(self, symbol: str) -> bool:
+        """Check if we should fetch data for symbol based on throttling rules"""
+        current_time = time.time()
+        last_fetch = self.last_fetch_times.get(symbol, 0)
+        
+        time_since_last = current_time - last_fetch
+        
+        # For 4h timeframe, enforce minimum interval to prevent spam
+        if time_since_last < self.min_fetch_interval:
+            self.logger.debug(f"Throttling fetch for {symbol}: {time_since_last:.1f}s < {self.min_fetch_interval}s")
+            return False
+            
+        return True
+    
+    def _record_fetch_time(self, symbol: str):
+        """Record the fetch time for a symbol"""
+        self.last_fetch_times[symbol] = time.time()
+
     def _update_loop(self):
-        """Main update loop for real-time data"""
+        """Main update loop for real-time data with throttling"""
         while not self.stop_updates:
             try:
                 # Update latest prices for all symbols
                 for symbol in self.symbols:
                     try:
+                        # Check throttling before updating
+                        if not self._should_fetch_data(symbol):
+                            continue
+                            
                         self._update_symbol_price(symbol)
+                        self._record_fetch_time(symbol)
                         
                         # Update historical data less frequently (every 4 hours for 4h timeframe)
                         if self._should_update_historical(symbol):

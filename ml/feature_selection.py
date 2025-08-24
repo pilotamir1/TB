@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 from sklearn.feature_selection import RFE, SelectKBest, f_classif
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.metrics import f1_score, make_scorer
 from typing import List, Dict, Tuple, Any
 import logging
 
@@ -270,6 +272,193 @@ class FeatureSelector:
         
         return ranking_df
     
+    def select_features_dynamic(self, X: pd.DataFrame, y: pd.Series,
+                              must_include: List[str] = None,
+                              min_features: int = 20,
+                              drop_fraction: float = 0.05,
+                              corr_threshold: float = 0.95,
+                              tolerance: float = 0.003,
+                              metric: str = 'macro_f1',
+                              cv_splits: int = 3,
+                              max_iterations: int = 50) -> Tuple[List[str], Dict[str, Any]]:
+        """
+        Dynamic iterative pruning method with macro F1 optimization
+        
+        Args:
+            X: Feature matrix
+            y: Target labels
+            must_include: Features that must be included (base OHLCV etc.)
+            min_features: Minimum number of features to retain
+            drop_fraction: Fraction of features to drop each iteration
+            corr_threshold: Correlation threshold for pruning
+            tolerance: Minimum improvement to continue
+            metric: Metric to optimize ('macro_f1' or 'balanced_accuracy')
+            cv_splits: Number of cross-validation splits
+            max_iterations: Maximum number of iterations
+            
+        Returns:
+            Tuple of (selected_features, selection_info)
+        """
+        try:
+            self.logger.info(f"Starting dynamic feature selection with {len(X.columns)} features")
+            
+            # Prepare must-include features
+            must_include = must_include or []
+            history = []
+            
+            # Clean initial features
+            X_clean = self._clean_features(X.copy())
+            
+            # Step 1: Correlation pruning
+            candidate_features = [col for col in X_clean.columns if col not in must_include]
+            X_candidates = X_clean[candidate_features]
+            
+            # Remove highly correlated features
+            corr_matrix = X_candidates.corr().abs()
+            upper_tri = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+            
+            to_drop = []
+            for column in upper_tri.columns:
+                correlated_features = upper_tri.index[upper_tri[column] > corr_threshold].tolist()
+                to_drop.extend(correlated_features)
+            
+            # Remove duplicates and update candidates
+            to_drop = list(set(to_drop))
+            candidate_features = [col for col in candidate_features if col not in to_drop]
+            
+            self.logger.info(f"Correlation pruning: removed {len(to_drop)} features, {len(candidate_features)} candidates remain")
+            
+            # Step 2: Initial feature set (must_include + all candidates)
+            current_features = must_include + candidate_features
+            current_features = [col for col in current_features if col in X_clean.columns]
+            
+            # Prepare cross-validation
+            cv = StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=42)
+            estimator = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+            
+            # Scorer based on metric
+            if metric == 'macro_f1':
+                scorer = make_scorer(f1_score, average='macro')
+            else:
+                scorer = 'balanced_accuracy'
+            
+            # Baseline score
+            X_current = X_clean[current_features]
+            baseline_scores = cross_val_score(estimator, X_current, y, cv=cv, scoring=scorer, n_jobs=-1)
+            baseline_score = np.mean(baseline_scores[~np.isnan(baseline_scores)])
+            
+            self.logger.info(f"Baseline {metric}: {baseline_score:.4f} with {len(current_features)} features")
+            
+            history.append({
+                'iteration': 0,
+                'features_count': len(current_features),
+                'score': baseline_score,
+                'features': current_features.copy(),
+                'action': 'baseline'
+            })
+            
+            # Step 3: Iterative pruning
+            best_score = baseline_score
+            best_features = current_features.copy()
+            iterations_without_improvement = 0
+            
+            for iteration in range(1, max_iterations + 1):
+                if len(current_features) <= max(min_features, len(must_include)):
+                    self.logger.info(f"Reached minimum features limit at iteration {iteration}")
+                    break
+                
+                # Calculate how many features to drop
+                droppable_features = [f for f in current_features if f not in must_include]
+                if not droppable_features:
+                    break
+                
+                n_to_drop = max(1, int(len(droppable_features) * drop_fraction))
+                n_to_drop = min(n_to_drop, len(droppable_features) - max(0, min_features - len(must_include)))
+                
+                if n_to_drop <= 0:
+                    break
+                
+                # Get feature importance for ranking
+                temp_estimator = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+                temp_estimator.fit(X_clean[current_features], y)
+                
+                feature_importance = pd.DataFrame({
+                    'feature': current_features,
+                    'importance': temp_estimator.feature_importances_
+                }).sort_values('importance')
+                
+                # Find least important droppable features
+                droppable_importance = feature_importance[
+                    feature_importance['feature'].isin(droppable_features)
+                ]
+                features_to_drop = droppable_importance.head(n_to_drop)['feature'].tolist()
+                
+                # Test new feature set
+                test_features = [f for f in current_features if f not in features_to_drop]
+                X_test = X_clean[test_features]
+                
+                try:
+                    test_scores = cross_val_score(estimator, X_test, y, cv=cv, scoring=scorer, n_jobs=-1)
+                    test_score = np.mean(test_scores[~np.isnan(test_scores)])
+                except Exception as e:
+                    self.logger.warning(f"CV evaluation failed at iteration {iteration}: {e}")
+                    test_score = 0.0
+                
+                self.logger.info(f"Iteration {iteration}: {metric} = {test_score:.4f} with {len(test_features)} features")
+                
+                history.append({
+                    'iteration': iteration,
+                    'features_count': len(test_features),
+                    'score': test_score,
+                    'features': test_features.copy(),
+                    'action': f'dropped_{n_to_drop}_features'
+                })
+                
+                # Check if improvement is significant
+                if test_score > best_score + tolerance:
+                    best_score = test_score
+                    best_features = test_features.copy()
+                    current_features = test_features.copy()
+                    iterations_without_improvement = 0
+                    self.logger.info(f"Improvement found: {test_score:.4f} > {best_score - tolerance:.4f}")
+                else:
+                    iterations_without_improvement += 1
+                    # Continue with current set for next iteration
+                    current_features = test_features.copy()
+                    
+                    if iterations_without_improvement >= 3:  # Early stopping
+                        self.logger.info(f"Early stopping: no improvement for 3 iterations")
+                        break
+            
+            # Final selection info
+            selection_info = {
+                'method': 'dynamic_iterative_pruning',
+                'total_features': len(X.columns),
+                'selected_count': len(best_features),
+                'must_include_count': len(must_include),
+                'baseline_score': baseline_score,
+                'final_score': best_score,
+                'improvement': best_score - baseline_score,
+                'iterations': len(history) - 1,
+                'metric': metric,
+                'tolerance': tolerance,
+                'correlation_removed': len(to_drop),
+                'history': history
+            }
+            
+            self.selected_features = best_features
+            
+            self.logger.info(f"Dynamic selection completed: {len(best_features)} features, "
+                           f"{metric} improved from {baseline_score:.4f} to {best_score:.4f}")
+            
+            return best_features, selection_info
+            
+        except Exception as e:
+            self.logger.error(f"Error in dynamic feature selection: {e}")
+            # Fallback to RFE if dynamic fails
+            self.logger.warning("Falling back to RFE selection")
+            return self.select_features_rfe(X, y, must_include)
+
     def evaluate_feature_importance_on_recent_data(self, X: pd.DataFrame, y: pd.Series,
                                                  recent_samples: int = 1000) -> pd.DataFrame:
         """

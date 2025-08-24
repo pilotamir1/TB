@@ -15,6 +15,7 @@ from indicators.definitions import IndicatorDefinitions
 from database.connection import db_connection
 from database.models import Candle, ModelTraining
 from config.settings import ML_CONFIG, TRADING_CONFIG
+from config.config_loader import get_config_value
 
 class ModelTrainer:
     """
@@ -206,8 +207,8 @@ class ModelTrainer:
         nan_threshold = len(X) * 0.5
         X = X.dropna(axis=1, thresh=nan_threshold)
         
-        # Fill remaining NaN with forward fill then backward fill
-        X = X.fillna(method='ffill').fillna(method='bfill')
+        # Fill remaining NaN with forward fill then backward fill (fixed deprecated method)
+        X = X.ffill().bfill()
         
         # Remove infinite values
         X = X.replace([np.inf, -np.inf], np.nan)
@@ -262,27 +263,56 @@ class ModelTrainer:
             self.training_progress.update({
                 'stage': 'feature_selection',
                 'progress': 60,
-                'message': 'Performing RFE feature selection'
+                'message': 'Performing feature selection'
             })
             
-            # Feature selection
-            self.feature_selector = FeatureSelector(n_features_to_select=ML_CONFIG['selected_features'])
+            # Get feature selection configuration
+            feature_selection_mode = get_config_value('feature_selection.mode', 'rfe')
+            target_features = get_config_value('feature_selection.target_features', 30)
+            
+            # Log class distribution
+            self.logger.info(f"Class distribution: {y.value_counts().to_dict()}")
+            
+            # Feature selection with config-based mode switching
+            self.feature_selector = FeatureSelector(n_features_to_select=target_features)
             
             # Get must-include features (prerequisites and required indicators)
             required_indicators = self.definitions.get_required_indicators()
             must_include = list(required_indicators.keys())
             
-            # Get features to select from recent data for RFE
-            recent_samples = min(ML_CONFIG['rfe_sample_size'], len(X))
+            # Get features to select from recent data
+            recent_samples = min(ML_CONFIG.get('rfe_sample_size', 5000), len(X))
             X_recent = X.tail(recent_samples)
             y_recent = y.tail(recent_samples)
             
-            # Perform feature selection on recent data
-            selected_features, selection_info = self.feature_selector.select_features_rfe(
-                X_recent, y_recent, must_include=must_include
-            )
+            # Perform feature selection based on mode
+            if feature_selection_mode == 'dynamic':
+                self.logger.info("Using dynamic feature selection")
+                dynamic_config = get_config_value('feature_selection.dynamic', {})
+                selected_features, selection_info = self.feature_selector.select_features_dynamic(
+                    X_recent, y_recent, 
+                    must_include=must_include,
+                    min_features=dynamic_config.get('min_features', 20),
+                    drop_fraction=dynamic_config.get('drop_fraction', 0.05),
+                    corr_threshold=dynamic_config.get('corr_threshold', 0.95),
+                    tolerance=dynamic_config.get('tolerance', 0.003),
+                    metric=dynamic_config.get('metric', 'macro_f1'),
+                    cv_splits=dynamic_config.get('cv_splits', 3),
+                    max_iterations=dynamic_config.get('max_iterations', 50)
+                )
+            elif feature_selection_mode == 'hybrid':
+                self.logger.info("Using hybrid feature selection")
+                selected_features, selection_info = self.feature_selector.select_features_hybrid(
+                    X_recent, y_recent, must_include=must_include
+                )
+            else:  # default to RFE
+                self.logger.info("Using RFE feature selection")
+                selected_features, selection_info = self.feature_selector.select_features_rfe(
+                    X_recent, y_recent, must_include=must_include
+                )
             
-            self.logger.info(f"Selected {len(selected_features)} features: {selection_info}")
+            self.logger.info(f"Selected {len(selected_features)} features using {feature_selection_mode} method")
+            self.logger.info(f"Selection details: {selection_info}")
             
             # Filter training data to selected features
             X_selected = X[selected_features]
@@ -342,6 +372,18 @@ class ModelTrainer:
             session.commit()
             session.close()
             
+            # Enhance selection_info with metadata for serialization/inference
+            enhanced_selection_info = selection_info.copy()
+            if 'history' in selection_info:
+                # For dynamic selection, add summary to the main info
+                enhanced_selection_info['selection_history_summary'] = {
+                    'iterations_count': len(selection_info['history']) - 1,
+                    'baseline_score': selection_info.get('baseline_score', 0.0),
+                    'final_score': selection_info.get('final_score', 0.0),
+                    'improvement': selection_info.get('improvement', 0.0),
+                    'metric_used': selection_info.get('metric', 'unknown')
+                }
+            
             self.training_progress.update({
                 'stage': 'completed',
                 'progress': 100,
@@ -357,7 +399,7 @@ class ModelTrainer:
                 'model_version': self.model.model_version,
                 'training_time': (training_end - training_start).total_seconds(),
                 'selected_features': selected_features,
-                'selection_info': selection_info,
+                'selection_info': enhanced_selection_info,
                 'training_metrics': training_metrics,
                 'model_path': model_path
             }

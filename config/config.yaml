@@ -89,12 +89,23 @@ catboost:
 
 # Feature Selection Configuration
 feature_selection:
-  method: "rfe"  # Options: rfe, shap, permutation
+  mode: "dynamic"  # Options: rfe, shap, hybrid, dynamic
+  method: "rfe"  # legacy key kept for compatibility
   target_features: 30
   correlation_threshold: 0.9  # Remove features with correlation > this
   importance_threshold: 0.001  # Minimum feature importance to keep
   
-  # Advanced Adaptive Feature Selection
+  # Dynamic Feature Selection
+  dynamic:
+    min_features: 20
+    drop_fraction: 0.05
+    corr_threshold: 0.95
+    tolerance: 0.003
+    metric: 'macro_f1'
+    cv_splits: 3
+    max_iterations: 50
+  
+  # Advanced Adaptive Feature Selection (legacy)
   adaptive:
     enabled: false  # Set to true to enable adaptive selection (disabled for performance)
     initial_top_k: 40  # Stage A: Keep top K candidates by importance (reduced from 80)
