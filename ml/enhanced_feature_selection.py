@@ -214,7 +214,13 @@ class EnhancedFeatureSelector:
                 
                 correlation = correlation_matrix.iloc[i, j]
                 
-                if correlation > self.correlation_threshold:
+                # Handle numpy array comparisons properly
+                if np.isscalar(correlation):
+                    correlation_value = correlation
+                else:
+                    correlation_value = correlation.item() if hasattr(correlation, 'item') else float(correlation)
+                
+                if correlation_value > self.correlation_threshold:
                     # Remove the feature with lower importance
                     imp1 = importance_series.get(feature1, 0)
                     imp2 = importance_series.get(feature2, 0)
@@ -246,14 +252,30 @@ class EnhancedFeatureSelector:
             reverse=True
         )
         
-        # Apply importance threshold
-        significant_features = [
-            f for f, imp in sorted_features 
-            if imp >= self.importance_threshold
-        ]
+        # Apply importance threshold, but ensure we select target_features even if below threshold
+        significant_features = []
+        for i, (f, imp) in enumerate(sorted_features):
+            try:
+                # Handle numpy array values properly
+                if np.isscalar(imp):
+                    imp_value = imp
+                else:
+                    imp_value = imp.item() if hasattr(imp, 'item') else float(imp)
+                
+                if imp_value >= self.importance_threshold:
+                    significant_features.append(f)
+            except Exception as e:
+                self.logger.error(f"Error processing feature {f} with importance {imp} (type: {type(imp)}): {e}")
+                # Add feature anyway to prevent total failure
+                significant_features.append(f)
         
-        # Take top N features
-        selected_features = significant_features[:self.target_features]
+        # If threshold filtering left us with too few features, take top features regardless of threshold
+        if len(significant_features) < self.target_features:
+            self.logger.warning(f"Only {len(significant_features)} features above threshold {self.importance_threshold}, "
+                              f"selecting top {self.target_features} features regardless of threshold")
+            selected_features = [f for f, _ in sorted_features[:self.target_features]]
+        else:
+            selected_features = significant_features[:self.target_features]
         
         self.logger.info(f"Selected top {len(selected_features)} features")
         
@@ -285,20 +307,36 @@ class EnhancedFeatureSelector:
             remaining_features = self.remove_correlated_features(feature_importance, correlation_matrix)
             
             # Ensure must_include features are preserved
-            for feature in must_include:
-                if feature in X.columns and feature not in remaining_features:
-                    remaining_features.append(feature)
+            try:
+                for feature in must_include:
+                    if feature in X.columns.tolist() and feature not in remaining_features:
+                        remaining_features.append(feature)
+            except Exception as e:
+                self.logger.error(f"Error in must_include preservation: {e}")
+                raise e
             
             # Select top features
-            selected_features = self.select_top_features(feature_importance, remaining_features)
+            try:
+                selected_features = self.select_top_features(feature_importance, remaining_features)
+            except Exception as e:
+                self.logger.error(f"Error in select_top_features: {e}")
+                raise e
             
             # Ensure must_include features are in final selection
-            for feature in must_include:
-                if feature in X.columns and feature not in selected_features:
-                    selected_features.append(feature)
+            try:
+                for feature in must_include:
+                    if feature in X.columns.tolist() and feature not in selected_features:
+                        selected_features.append(feature)
+            except Exception as e:
+                self.logger.error(f"Error in final must_include check: {e}")
+                raise e
             
             # Remove duplicates and limit to target count
-            selected_features = list(dict.fromkeys(selected_features))[:self.target_features]
+            try:
+                selected_features = list(dict.fromkeys(selected_features))[:self.target_features]
+            except Exception as e:
+                self.logger.error(f"Error in deduplication: {e}")
+                raise e
             
             # Create selection metadata
             selection_info = {
@@ -501,12 +539,16 @@ class EnhancedFeatureSelector:
         """Main feature selection method - chooses between adaptive and traditional methods"""
         must_include = must_include or []
         
+        # Automatically include base OHLCV features
+        base_features = self._identify_base_features(X)
+        all_must_include = list(set(must_include + base_features))
+        
         if self.use_adaptive:
-            return self.select_features_adaptive(X, y, must_include)
+            return self.select_features_adaptive(X, y, all_must_include)
         elif self.method in ['shap', 'permutation']:
-            return self.select_features_shap_based(X, y, must_include)
+            return self.select_features_shap_based(X, y, all_must_include)
         else:
-            return self.select_features_rfe_fallback(X, y, must_include)
+            return self.select_features_rfe_fallback(X, y, all_must_include)
     
     def get_feature_importance_report(self) -> Dict[str, Any]:
         """Get detailed feature importance report"""
