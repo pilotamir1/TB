@@ -316,23 +316,25 @@ class CoinExAPI:
         return candles
     
     def test_connection(self) -> bool:
-        """Test API connection with graceful fallback"""
+        """Test API connection with enhanced v2/v1 fallback"""
         try:
-            # Try newer API endpoint first
-            endpoint = "common/server-time"
+            # Try v2 API endpoint first  
             try:
+                # Try server-time endpoint (v2 style)
+                endpoint = "common/server-time"
                 self._make_request('GET', endpoint, auth_required=False)
                 self.logger.info("CoinEx API connection successful (v2 endpoint)")
             except Exception as e:
-                # Fallback to older endpoint
-                self.logger.debug(f"New endpoint failed, trying legacy: {e}")
-                endpoint = "common/timestamp"
+                self.logger.debug(f"v2 endpoint (server-time) failed: {e}")
+                
+                # Fallback to v1 endpoint
                 try:
+                    endpoint = "common/timestamp"
                     self._make_request('GET', endpoint, auth_required=False)
-                    self.logger.info("CoinEx API connection successful (legacy endpoint)")
+                    self.logger.info("CoinEx API connection successful (v1 endpoint)")
                 except Exception as e2:
                     # If both fail, log warning but don't raise in demo mode
-                    self.logger.warning(f"Both CoinEx API endpoints failed. v2: {e}, v1: {e2}")
+                    self.logger.warning(f"Both CoinEx API endpoints failed. v2 (server-time): {e}, v1 (timestamp): {e2}")
                     if self.sandbox_mode:
                         self.logger.info("Running in demo mode - API connection failure is non-critical")
                         return True  # Allow demo mode to continue
