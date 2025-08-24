@@ -3394,3 +3394,4 @@ Loaded 197 indicator definitions
 2025-08-24 12:31:13,342 - trading.engine - INFO -    Probabilities: BUY=0.004, SELL=0.993, HOLD=0.003
 2025-08-24 12:31:13,358 - trading.engine - INFO -  Processing SELL signal for DOGEUSDT
 2025-08-24 12:31:13,358 - trading.engine - INFO - SELL signal for DOGEUSDT but no open position - waiting for BUY signal
+
