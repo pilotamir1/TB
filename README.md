@@ -279,9 +279,51 @@ This trading bot is for educational and research purposes. Cryptocurrency tradin
 
 MIT License - see LICENSE file for details.
 
+## Diagnostics and System Analysis
+
+### Log Analysis Tool
+
+The repository includes a diagnostic utility to analyze system logs and generate comprehensive reports:
+
+```bash
+python scripts/log_summary.py --input LOG.txt --out-json reports/diagnostic_stats.json --out-md reports/diagnostic_stats.md
+```
+
+**Features:**
+- Parses LOG.txt and extracts key metrics
+- Counts log levels (INFO, WARNING, ERROR)
+- Identifies API errors and connection issues
+- Tracks trading signals (BUY/SELL/HOLD) across symbols
+- Analyzes latency patterns and performance metrics
+- Generates both JSON and Markdown summary reports
+
+### Diagnostic Prompts
+
+For comprehensive system analysis, use the Persian diagnostic prompts in `docs/DIAGNOSTIC_PROMPTS.md`:
+
+1. **تشخیص (Diagnostic)**: Generates a structured diagnostic report analyzing:
+   - System architecture and performance
+   - AI model effectiveness
+   - Trading activity patterns
+   - Error analysis and technical performance
+   - Code quality and monitoring systems
+
+2. **برنامه اصلاحات (Remediation Plan)**: Creates actionable improvement plans based on diagnostic findings
+
+**Usage Workflow:**
+1. Generate log statistics: `python scripts/log_summary.py --input LOG.txt --out-json reports/diagnostic_stats.json --out-md reports/diagnostic_stats.md`
+2. Use diagnostic prompt with repository code + LOG.txt + generated stats
+3. Apply remediation prompt to create improvement plan
+
+### Configuration Templates
+
+- `config/logging_example.yaml`: Example configuration for standardized JSON logging
+- Future enhancement template for structured logging implementation
+
 ## Support
 
 For issues and questions:
 - Create GitHub issues for bugs and feature requests
 - Check the logs directory for detailed error information
 - Use the web dashboard system logs for real-time debugging
+- Run diagnostic analysis using `scripts/log_summary.py` for comprehensive system insights

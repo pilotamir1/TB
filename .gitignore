@@ -67,3 +67,12 @@ logs/
 # Temporary files
 tmp/
 temp/
+
+# Diagnostic reports and generated files
+reports/
+*.json
+*.md
+# Keep specific documentation files under version control
+!docs/*.md
+!README.md
+!DIAGNOSTICS_README.md
