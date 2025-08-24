@@ -34,6 +34,13 @@ data_sources:
   retry_count: 3
   retry_backoff: 2.0  # exponential backoff multiplier
 
+# Data fetching configuration
+data:
+  update_interval: 60  # seconds between data updates
+  min_fetch_interval_seconds: 30  # minimum seconds between fetches for same symbol
+  max_retries: 3
+  cache_enabled: true
+
 # Machine Learning Configuration
 ml:
   model_type: "xgboost"  # Options: xgboost, catboost
@@ -104,6 +111,7 @@ feature_selection:
     metric: 'macro_f1'
     cv_splits: 3
     max_iterations: 50
+    max_history_length: 100  # Maximum entries to keep in selection history
   
   # Advanced Adaptive Feature Selection (legacy)
   adaptive:

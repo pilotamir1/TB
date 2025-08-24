@@ -10,6 +10,7 @@ from indicators.calculator import IndicatorCalculator
 from database.connection import db_connection
 from database.models import Candle
 from config.settings import TRADING_CONFIG, DATA_CONFIG
+from config.config_loader import get_config_value
 
 class DataFetcher:
     """
@@ -36,7 +37,7 @@ class DataFetcher:
         
         # Throttling for data fetch spam prevention
         self.last_fetch_times = {}  # symbol -> timestamp
-        self.min_fetch_interval = 30  # minimum 30 seconds between fetches for same symbol
+        self.min_fetch_interval = get_config_value('data.min_fetch_interval_seconds', 30)  # configurable throttling
         
         self.logger.info("Data fetcher initialized")
     

@@ -313,24 +313,68 @@ class FeatureSelector:
             candidate_features = [col for col in X_clean.columns if col not in must_include]
             X_candidates = X_clean[candidate_features]
             
-            # Remove highly correlated features
+            # Remove highly correlated features using importance-based selection
             corr_matrix = X_candidates.corr().abs()
-            upper_tri = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
             
-            to_drop = []
-            for column in upper_tri.columns:
-                correlated_features = upper_tri.index[upper_tri[column] > corr_threshold].tolist()
-                to_drop.extend(correlated_features)
+            # Get initial feature importance to guide correlation pruning
+            temp_estimator = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+            temp_estimator.fit(X_candidates, y)
+            feature_importance = dict(zip(candidate_features, temp_estimator.feature_importances_))
             
-            # Remove duplicates and update candidates
-            to_drop = list(set(to_drop))
+            to_drop = set()
+            # Find pairs of highly correlated features and drop the less important one
+            for i, feature1 in enumerate(candidate_features):
+                if feature1 in to_drop:
+                    continue
+                    
+                for j, feature2 in enumerate(candidate_features[i+1:], i+1):
+                    if feature2 in to_drop:
+                        continue
+                    
+                    correlation = corr_matrix.iloc[i, j]
+                    if abs(correlation) > corr_threshold:
+                        # Drop the feature with lower importance
+                        imp1 = feature_importance.get(feature1, 0)
+                        imp2 = feature_importance.get(feature2, 0)
+                        
+                        if imp1 < imp2:
+                            to_drop.add(feature1)
+                            break  # Move to next feature1
+                        else:
+                            to_drop.add(feature2)
+            
+            # Update candidates by removing dropped features
             candidate_features = [col for col in candidate_features if col not in to_drop]
             
             self.logger.info(f"Correlation pruning: removed {len(to_drop)} features, {len(candidate_features)} candidates remain")
             
-            # Step 2: Initial feature set (must_include + all candidates)
-            current_features = must_include + candidate_features
+            # Safety check: ensure we have some candidate features
+            if not candidate_features:
+                self.logger.warning("No candidate features remain after correlation pruning, using all must_include features")
+                current_features = must_include
+            else:
+                # Step 2: Initial feature set (must_include + all candidates)
+                current_features = must_include + candidate_features
+            
             current_features = [col for col in current_features if col in X_clean.columns]
+            
+            # Safety check: ensure we have minimum features
+            if len(current_features) < min_features:
+                self.logger.warning(f"Feature count ({len(current_features)}) below minimum ({min_features}), "
+                                  f"adding top features by importance")
+                # Add back some features if we dropped too many
+                all_candidates = [col for col in X_clean.columns if col not in must_include]
+                if all_candidates:
+                    temp_estimator = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+                    temp_estimator.fit(X_clean[all_candidates], y)
+                    feature_importance = dict(zip(all_candidates, temp_estimator.feature_importances_))
+                    
+                    # Add top features to reach minimum
+                    needed = min_features - len(current_features)
+                    top_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
+                    for feat, _ in top_features[:needed]:
+                        if feat not in current_features:
+                            current_features.append(feat)
             
             # Prepare cross-validation
             cv = StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=42)

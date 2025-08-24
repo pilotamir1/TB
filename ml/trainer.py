@@ -314,6 +314,27 @@ class ModelTrainer:
             self.logger.info(f"Selected {len(selected_features)} features using {feature_selection_mode} method")
             self.logger.info(f"Selection details: {selection_info}")
             
+            # Enhanced logging for dynamic feature selection
+            if feature_selection_mode == 'dynamic' and 'history' in selection_info:
+                self.logger.info("=== Dynamic Feature Selection Summary ===")
+                self.logger.info(f"Baseline score: {selection_info.get('baseline_score', 0.0):.4f}")
+                self.logger.info(f"Final score: {selection_info.get('final_score', 0.0):.4f}")
+                self.logger.info(f"Improvement: {selection_info.get('improvement', 0.0):.4f}")
+                self.logger.info(f"Total iterations: {selection_info.get('iterations', 0)}")
+                self.logger.info(f"Correlation removed: {selection_info.get('correlation_removed', 0)} features")
+                
+                # Log iteration details
+                for entry in selection_info['history'][:5]:  # Log first 5 iterations
+                    iteration = entry.get('iteration', 0)
+                    score = entry.get('score', 0.0)
+                    feature_count = entry.get('features_count', 0)
+                    action = entry.get('action', 'unknown')
+                    self.logger.info(f"  Iteration {iteration}: {score:.4f} score, {feature_count} features, {action}")
+                
+                if len(selection_info['history']) > 5:
+                    self.logger.info(f"  ... and {len(selection_info['history']) - 5} more iterations")
+                self.logger.info("===========================================")
+            
             # Filter training data to selected features
             X_selected = X[selected_features]
             
@@ -383,6 +404,19 @@ class ModelTrainer:
                     'improvement': selection_info.get('improvement', 0.0),
                     'metric_used': selection_info.get('metric', 'unknown')
                 }
+                
+                # Optional history truncation for storage efficiency
+                max_history_length = get_config_value('feature_selection.dynamic.max_history_length', 100)
+                if len(selection_info['history']) > max_history_length:
+                    self.logger.info(f"Truncating selection history from {len(selection_info['history'])} to {max_history_length} entries")
+                    # Keep baseline (first entry) and last N-1 entries
+                    truncated_history = [selection_info['history'][0]]  # baseline
+                    truncated_history.extend(selection_info['history'][-(max_history_length-1):])  # recent entries
+                    enhanced_selection_info['history'] = truncated_history
+                    enhanced_selection_info['history_truncated'] = True
+                    enhanced_selection_info['original_history_length'] = len(selection_info['history'])
+                else:
+                    enhanced_selection_info['history_truncated'] = False
             
             self.training_progress.update({
                 'stage': 'completed',
