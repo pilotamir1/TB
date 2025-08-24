@@ -6,7 +6,8 @@ This is a comprehensive AI-powered cryptocurrency trading bot built for automate
 
 ### 🤖 AI Model
 - **Machine Learning**: RandomForest, GradientBoosting, and LogisticRegression models
-- **Feature Selection**: Dynamic adaptive selection optimizes feature count based on macro F1 performance, or traditional RFE/SHAP methods
+- **Dynamic Feature Selection**: Intelligent importance-based correlation pruning and iterative optimization that dynamically determines optimal feature count based on macro F1 performance, replacing fixed 50-feature limits with adaptive selection
+- **Traditional Feature Selection**: Alternative RFE/SHAP methods for compatibility
 - **Training Data**: Uses 58,000+ historical OHLCV data points from MySQL database
 - **Confidence Threshold**: Only executes trades with >70% model confidence
 - **Auto-Retraining**: Continuous model improvement based on market conditions
@@ -175,11 +176,12 @@ TB/
 The system intelligently selects features using multiple approaches:
 
 **Dynamic Mode (Performance-Driven)**:
-- No fixed feature limit - optimizes for macro F1 score
-- Correlation-aware pruning removes redundant features
-- Iterative selection with tolerance-based early stopping
-- Preserves essential OHLCV and required indicators
-- Provides detailed selection history for analysis
+- **Importance-Based Correlation Pruning**: When features are highly correlated (>95%), keeps the more important feature based on RandomForest importance scores
+- **Adaptive Feature Count**: No fixed limit - dynamically determines optimal feature count through iterative pruning
+- **Macro F1 Optimization**: Uses stratified cross-validation to optimize for macro F1 score rather than arbitrary feature counts
+- **Safety Mechanisms**: Comprehensive fallbacks prevent over-pruning and ensure minimum feature requirements
+- **Detailed Logging**: Complete iteration history with scores, improvements, and feature changes
+- **History Persistence**: Saves selection history with optional truncation for storage efficiency
 
 **Traditional Modes**:
 - **RFE**: Recursive Feature Elimination with RandomForest
@@ -191,9 +193,17 @@ The system intelligently selects features using multiple approaches:
 feature_selection:
   mode: "dynamic"  # or "rfe", "shap", "hybrid"
   dynamic:
-    min_features: 20
-    metric: 'macro_f1'
-    tolerance: 0.003
+    min_features: 20          # Minimum features to retain
+    drop_fraction: 0.05       # Fraction to drop per iteration
+    corr_threshold: 0.95      # Correlation threshold for pruning
+    tolerance: 0.003          # Minimum improvement to continue
+    metric: 'macro_f1'        # Optimization metric
+    cv_splits: 3              # Cross-validation splits
+    max_iterations: 50        # Maximum iteration limit
+    max_history_length: 100   # History truncation for efficiency
+
+data:
+  min_fetch_interval_seconds: 30  # Throttling for API calls
 ```
 
 See [docs/dynamic_feature_selection.md](docs/dynamic_feature_selection.md) for detailed documentation.
