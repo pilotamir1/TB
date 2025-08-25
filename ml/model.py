@@ -11,6 +11,9 @@ from typing import Dict, List, Any, Tuple
 import os
 from datetime import datetime
 
+# Import configuration
+from config.settings import XGB_PRO_CONFIG
+
 class TradingModel:
     """
     AI Trading Model for signal generation
@@ -49,24 +52,35 @@ class TradingModel:
                 random_state=42
             )
         elif self.model_type == 'xgboost_professional':
-            # Professional XGBoost configuration with millions of trees equivalent
+            # Professional XGBoost configuration with configurable parameters
+            xgb_config = XGB_PRO_CONFIG
+            n_estimators = xgb_config.get('n_estimators', 8000)
+            early_stopping = xgb_config.get('early_stopping_rounds', 300)
+            
+            # Log XGBoost configuration
+            self.logger.info(f"XGBoost n_estimators={n_estimators}, max_depth={xgb_config.get('max_depth', 12)}, learning_rate={xgb_config.get('learning_rate', 0.01)}")
+            self.logger.info(f"XGBoost early_stopping_rounds={early_stopping}, features={len(self.feature_names) if self.feature_names else 'unknown'}")
+            
+            # Handle early stopping configuration (0 means disabled)
+            early_stopping_param = None if early_stopping == 0 else early_stopping
+            
             self.model = xgb.XGBClassifier(
-                n_estimators=5000,  # 5000 trees - professional deep model
-                max_depth=12,       # Deep trees for complex patterns
-                learning_rate=0.01, # Low learning rate for better generalization
-                subsample=0.8,      # Prevent overfitting
-                colsample_bytree=0.8,
-                colsample_bylevel=0.8,
-                min_child_weight=1,
-                gamma=0.1,
-                reg_alpha=0.1,      # L1 regularization
-                reg_lambda=1.0,     # L2 regularization
+                n_estimators=n_estimators,
+                max_depth=xgb_config.get('max_depth', 12),
+                learning_rate=xgb_config.get('learning_rate', 0.01),
+                subsample=xgb_config.get('subsample', 0.8),
+                colsample_bytree=xgb_config.get('colsample_bytree', 0.8),
+                colsample_bylevel=xgb_config.get('colsample_bylevel', 0.8),
+                min_child_weight=xgb_config.get('min_child_weight', 3),
+                gamma=xgb_config.get('gamma', 0.1),
+                reg_alpha=xgb_config.get('reg_alpha', 0.1),
+                reg_lambda=xgb_config.get('reg_lambda', 1.0),
                 random_state=42,
                 n_jobs=-1,
-                tree_method='hist',  # Efficient tree construction
+                tree_method=xgb_config.get('tree_method', 'hist'),
                 enable_categorical=False,
                 eval_metric='mlogloss',
-                early_stopping_rounds=100,
+                early_stopping_rounds=early_stopping_param,
                 verbosity=1
             )
         elif self.model_type == 'logistic_regression':
@@ -114,17 +128,26 @@ class TradingModel:
                 self.model = grid_search.best_estimator_
                 self.logger.info(f"Best parameters: {grid_search.best_params_}")
             elif self.model_type == 'xgboost_professional':
-                # Professional XGBoost training with validation
-                self.logger.info("Training professional XGBoost model with 5000 trees...")
-                if X_val is not None and y_val is not None:
+                # Professional XGBoost training with configurable parameters
+                xgb_config = XGB_PRO_CONFIG
+                n_estimators = xgb_config.get('n_estimators', 8000)
+                early_stopping = xgb_config.get('early_stopping_rounds', 300)
+                self.logger.info(f"Training professional XGBoost model with {n_estimators} trees...")
+                
+                if X_val is not None and y_val is not None and early_stopping > 0:
                     # Train with early stopping using validation set
+                    self.logger.info(f"Using validation set with early stopping rounds: {early_stopping}")
                     self.model.fit(
                         X_train, y_train,
                         eval_set=[(X_val, y_val)],
                         verbose=100  # Print every 100 iterations
                     )
                 else:
-                    # Train without early stopping
+                    # Train without early stopping or validation
+                    if early_stopping == 0:
+                        self.logger.info("Early stopping disabled - training all trees")
+                    else:
+                        self.logger.info("No validation set provided - training without early stopping")
                     self.model.fit(X_train, y_train, verbose=100)
                 self.logger.info("Professional XGBoost model training completed")
             else:
@@ -290,7 +313,14 @@ class TradingModel:
             }
             
             joblib.dump(model_data, filepath)
-            self.logger.info(f"Model saved to {filepath}")
+            
+            # Log model file size
+            if os.path.exists(filepath):
+                file_size_bytes = os.path.getsize(filepath)
+                file_size_mb = file_size_bytes / (1024 * 1024)
+                self.logger.info(f"Model saved to {filepath}")
+                self.logger.info(f"Model file size: {file_size_mb:.1f} MB")
+            
             return True
             
         except Exception as e:
