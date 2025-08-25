@@ -135,6 +135,14 @@ class TradingEngine:
         try:
             self.logger.info(f"{'Retraining' if retrain else 'Training'} AI model...")
             
+            # For 4h timeframe, ensure we have sufficient aligned candles before training
+            if self.timeframe == '4h':
+                self.logger.info("Checking and backfilling 4h candles before training...")
+                for symbol in self.symbols:
+                    success = self.data_fetcher.backfill_4h(symbol)
+                    if not success:
+                        self.logger.warning(f"Could not ensure sufficient 4h candles for {symbol}")
+            
             # Train model with RFE
             training_result = self.trainer.train_with_rfe(retrain=retrain)
             
