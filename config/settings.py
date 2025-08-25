@@ -32,7 +32,7 @@ DATABASE_CONFIG = {
 
 # Trading Configuration
 TRADING_CONFIG = {
-    'timeframe': '4h',  # 4-hour timeframe as specified
+    'timeframe': '1m',  # 4-hour timeframe as specified
     'demo_balance': 100.0,  # Starting demo balance in USD
     'confidence_threshold': 0.7,  # 70% confidence minimum
     'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],
