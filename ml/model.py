@@ -129,6 +129,10 @@ class TradingModel:
                 # Regular training
                 self.model.fit(X_train, y_train)
             
+            # NEW: log class mapping
+            if hasattr(self.model, "classes_"):
+                self.logger.info(f"MODEL CLASS ORDER: {self.model.classes_.tolist()}  (expected 0=SELL,1=BUY,2=HOLD)")
+
             # Calculate training metrics
             train_accuracy = self.model.score(X_train, y_train)
             
