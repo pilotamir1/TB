@@ -35,6 +35,15 @@ class ModelTrainer:
             'message': 'Model trainer initialized'
         }
     
+    def _is_aligned_4h(self, timestamp: int) -> bool:
+        """Check if timestamp is aligned to 4-hour boundary"""
+        try:
+            dt = datetime.fromtimestamp(timestamp)
+            # 4h aligned means hour is divisible by 4 and minute/second are 0
+            return dt.hour % 4 == 0 and dt.minute == 0 and dt.second == 0
+        except Exception:
+            return False
+    
     def get_training_progress(self) -> Dict[str, Any]:
         """Get current training progress"""
         return self.training_progress.copy()
@@ -93,6 +102,20 @@ class ModelTrainer:
                 } for candle in candles])
                 
                 symbol_data = symbol_data.sort_values('timestamp').reset_index(drop=True)
+                
+                # For 4h timeframe, filter to aligned candles and limit to last 800
+                if TRADING_CONFIG['timeframe'] == '4h':
+                    # Filter to only 4h aligned candles
+                    aligned_mask = symbol_data['timestamp'].apply(self._is_aligned_4h)
+                    symbol_data = symbol_data[aligned_mask].reset_index(drop=True)
+                    
+                    # Limit to last 800 aligned candles
+                    max_4h_candles = DATA_CONFIG.get('min_4h_candles', 800)
+                    if len(symbol_data) > max_4h_candles:
+                        symbol_data = symbol_data.tail(max_4h_candles).reset_index(drop=True)
+                    
+                    self.logger.info(f"Filtered to {len(symbol_data)} aligned 4h candles for {symbol}")
+                
                 all_data.append(symbol_data)
             
             session.close()

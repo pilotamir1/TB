@@ -1,7 +1,7 @@
 ---
 # Trading Bot Configuration
 trading:
-  timeframe: "1m"
+  timeframe: "4h"
   demo_balance: 100.0
   confidence_threshold: 0.7  # Base threshold, will be adaptive
   symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"]

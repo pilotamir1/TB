@@ -32,7 +32,7 @@ DATABASE_CONFIG = {
 
 # Trading Configuration
 TRADING_CONFIG = {
-    'timeframe': '1m',  # 4-hour timeframe as specified
+    'timeframe': '4h',  # 4-hour timeframe as specified
     'demo_balance': 100.0,  # Starting demo balance in USD
     'confidence_threshold': 0.7,  # 70% confidence minimum
     'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],
@@ -78,10 +78,11 @@ WEB_CONFIG = {
 
 # Data Update Configuration
 DATA_CONFIG = {
-    'update_interval': 1,  # Update every 1 second as specified
+    'update_interval': 300,  # Update every 300 seconds for 4h timeframe
     'batch_size': 100,
     'max_retries': 3,
     'timeout': 30,
+    'min_4h_candles': 800,  # Minimum aligned 4h candles required for training
 }
 
 # Logging Configuration

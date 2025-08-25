@@ -165,17 +165,23 @@ class DataFetcher:
             
             for candle_data in kline_data:
                 try:
+                    timestamp = candle_data['timestamp']
+                    
+                    # For 4h timeframe, only process aligned candles
+                    if self.timeframe == '4h' and not self._is_aligned_4h(timestamp):
+                        continue
+                    
                     # Check if candle already exists
                     existing_candle = session.query(Candle).filter(
                         Candle.symbol == symbol,
-                        Candle.timestamp == candle_data['timestamp']
+                        Candle.timestamp == timestamp
                     ).first()
                     
                     if not existing_candle:
                         # Create new candle
                         candle = Candle(
                             symbol=symbol,
-                            timestamp=candle_data['timestamp'],
+                            timestamp=timestamp,
                             open=candle_data['open'],
                             high=candle_data['high'],
                             low=candle_data['low'],
@@ -273,26 +279,37 @@ class DataFetcher:
             if historical_data.empty:
                 return None
             
-            # Add current price if available
-            current_price_info = self.get_latest_price(symbol)
-            if current_price_info:
-                current_time = int(current_price_info['timestamp'].timestamp())
-                current_price = current_price_info['price']
+            # For 4h timeframe, filter to only aligned 4h candles
+            if self.timeframe == '4h':
+                aligned_mask = historical_data['timestamp'].apply(self._is_aligned_4h)
+                historical_data = historical_data[aligned_mask].reset_index(drop=True)
                 
-                # Check if we need to add current data point
-                last_timestamp = historical_data['timestamp'].iloc[-1]
-                
-                # If current time is significantly different from last timestamp, add current point
-                if current_time - last_timestamp > 3600:  # More than 1 hour difference
-                    current_row = {
-                        'timestamp': current_time,
-                        'open': current_price,
-                        'high': current_price,
-                        'low': current_price,
-                        'close': current_price,
-                        'volume': current_price_info.get('volume', 0)
-                    }
-                    historical_data = pd.concat([historical_data, pd.DataFrame([current_row])], ignore_index=True)
+                if historical_data.empty:
+                    self.logger.warning(f"No aligned 4h candles found for {symbol}")
+                    return None
+            
+            # For 4h timeframe, do NOT add synthetic current price row
+            # Only add current price for shorter timeframes
+            if self.timeframe != '4h':
+                current_price_info = self.get_latest_price(symbol)
+                if current_price_info:
+                    current_time = int(current_price_info['timestamp'].timestamp())
+                    current_price = current_price_info['price']
+                    
+                    # Check if we need to add current data point
+                    last_timestamp = historical_data['timestamp'].iloc[-1]
+                    
+                    # If current time is significantly different from last timestamp, add current point
+                    if current_time - last_timestamp > 3600:  # More than 1 hour difference
+                        current_row = {
+                            'timestamp': current_time,
+                            'open': current_price,
+                            'high': current_price,
+                            'low': current_price,
+                            'close': current_price,
+                            'volume': current_price_info.get('volume', 0)
+                        }
+                        historical_data = pd.concat([historical_data, pd.DataFrame([current_row])], ignore_index=True)
             
             # Calculate all technical indicators
             data_with_indicators = self.calculator.calculate_all_indicators(historical_data)
@@ -343,6 +360,118 @@ class DataFetcher:
         except Exception as e:
             self.logger.error(f"Error getting recent performance data for {symbol}: {e}")
             return pd.DataFrame()
+    
+    def _is_aligned_4h(self, timestamp: int) -> bool:
+        """Check if timestamp is aligned to 4-hour boundary"""
+        try:
+            dt = datetime.fromtimestamp(timestamp)
+            # 4h aligned means hour is divisible by 4 and minute/second are 0
+            return dt.hour % 4 == 0 and dt.minute == 0 and dt.second == 0
+        except Exception:
+            return False
+    
+    def count_4h_candles(self, symbol: str) -> int:
+        """Count number of properly aligned 4h candles for symbol"""
+        try:
+            session = db_connection.get_session()
+            
+            candles = session.query(Candle).filter(
+                Candle.symbol == symbol
+            ).order_by(Candle.timestamp.asc()).all()
+            
+            session.close()
+            
+            aligned_count = 0
+            for candle in candles:
+                if self._is_aligned_4h(candle.timestamp):
+                    aligned_count += 1
+            
+            return aligned_count
+            
+        except Exception as e:
+            self.logger.error(f"Error counting 4h candles for {symbol}: {e}")
+            return 0
+    
+    def backfill_4h(self, symbol: str, min_candles: int = None) -> bool:
+        """Backfill 4h aligned candles to ensure minimum count"""
+        try:
+            if min_candles is None:
+                min_candles = DATA_CONFIG.get('min_4h_candles', 800)
+            
+            current_count = self.count_4h_candles(symbol)
+            self.logger.info(f"Current 4h candles for {symbol}: {current_count}")
+            
+            if current_count >= min_candles:
+                self.logger.info(f"Sufficient 4h candles for {symbol} ({current_count} >= {min_candles})")
+                return True
+            
+            # Calculate how many more candles we need
+            needed_candles = min_candles - current_count
+            
+            # For 4h timeframe, we need to go back needed_candles * 4 hours
+            hours_back = needed_candles * 4
+            
+            self.logger.info(f"Backfilling {needed_candles} 4h candles for {symbol} (going back {hours_back} hours)")
+            
+            # Try to get historical data from API
+            # Note: This is a simplified implementation - in production you might need
+            # multiple API calls due to limits
+            try:
+                kline_data = self.api.get_kline_data(symbol, '4h', limit=min(1000, needed_candles))
+                
+                if not kline_data:
+                    self.logger.warning(f"No backfill data received from API for {symbol}")
+                    return False
+                
+                session = db_connection.get_session()
+                added_count = 0
+                
+                for candle_data in kline_data:
+                    timestamp = candle_data['timestamp']
+                    
+                    # Only add if it's 4h aligned
+                    if not self._is_aligned_4h(timestamp):
+                        continue
+                    
+                    # Check if candle already exists
+                    existing_candle = session.query(Candle).filter(
+                        Candle.symbol == symbol,
+                        Candle.timestamp == timestamp
+                    ).first()
+                    
+                    if not existing_candle:
+                        candle = Candle(
+                            symbol=symbol,
+                            timestamp=timestamp,
+                            open=candle_data['open'],
+                            high=candle_data['high'],
+                            low=candle_data['low'],
+                            close=candle_data['close'],
+                            volume=candle_data['volume']
+                        )
+                        session.add(candle)
+                        added_count += 1
+                
+                session.commit()
+                session.close()
+                
+                self.logger.info(f"Backfilled {added_count} 4h candles for {symbol}")
+                
+                # Check if we now have enough
+                final_count = self.count_4h_candles(symbol)
+                if final_count >= min_candles:
+                    return True
+                else:
+                    self.logger.warning(f"Still insufficient 4h candles for {symbol} after backfill: {final_count} < {min_candles}")
+                    return False
+                    
+            except Exception as api_error:
+                self.logger.error(f"API error during backfill for {symbol}: {api_error}")
+                return False
+            
+        except Exception as e:
+            self.logger.error(f"Error backfilling 4h data for {symbol}: {e}")
+            return False
     
     def validate_data_quality(self, symbol: str) -> Dict[str, Any]:
         """Validate data quality for a symbol"""
