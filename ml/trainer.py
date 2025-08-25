@@ -14,7 +14,7 @@ from indicators.calculator import IndicatorCalculator
 from indicators.definitions import IndicatorDefinitions
 from database.connection import db_connection
 from database.models import Candle, ModelTraining
-from config.settings import ML_CONFIG, TRADING_CONFIG, DATA_CONFIG, FEATURE_SELECTION_CONFIG, XGB_PRO_CONFIG
+from config.settings import ML_CONFIG, TRADING_CONFIG, DATA_CONFIG, FEATURE_SELECTION_CONFIG, XGB_PRO_CONFIG, LABELING_CONFIG
 from config.config_loader import get_config_value
 
 class ModelTrainer:
@@ -72,7 +72,9 @@ class ModelTrainer:
             train_samples = train_samples or ML_CONFIG['training_data_size']
             
             # Get configuration for 4h timeframe limits
-            selection_limit = DATA_CONFIG.get('max_4h_selection_candles', 800)
+            # Use selection_window_4h from FEATURE_SELECTION_CONFIG when available
+            selection_limit = FEATURE_SELECTION_CONFIG.get('selection_window_4h', 
+                                                         DATA_CONFIG.get('max_4h_selection_candles', 800))
             training_limit = DATA_CONFIG.get('max_4h_training_candles', 2000)
             use_all_history = DATA_CONFIG.get('use_all_history', False)
             
@@ -292,15 +294,118 @@ class ModelTrainer:
             self.logger.error(f"Error preparing training data: {e}")
             raise
     
+    def _calculate_kl_divergence(self, actual_dist: Dict[str, float], target_dist: Dict[str, float]) -> float:
+        """Calculate KL divergence between actual and target distributions"""
+        kl_div = 0.0
+        for label in target_dist.keys():
+            if actual_dist.get(label, 0) > 0:
+                kl_div += target_dist[label] * np.log(target_dist[label] / actual_dist[label])
+        return kl_div
+    
+    def _calibrate_label_thresholds(self, df: pd.DataFrame) -> Tuple[float, float]:
+        """
+        Calibrate label thresholds to achieve target distribution using grid search
+        
+        Returns:
+            Tuple of (up_threshold, down_threshold) that best matches target distribution
+        """
+        if 'LABELING_CONFIG' not in globals() or not LABELING_CONFIG:
+            # Fallback to static thresholds if no config
+            return 2.0, -2.0
+            
+        target_dist = LABELING_CONFIG['target_distribution']
+        up_range = LABELING_CONFIG['search_up_range']
+        down_range = LABELING_CONFIG['search_down_range']
+        max_iterations = LABELING_CONFIG.get('max_search_iterations', 100)
+        tolerance = LABELING_CONFIG.get('convergence_tolerance', 0.01)
+        
+        self.logger.info(f"Calibrating label thresholds for target distribution: {target_dist}")
+        
+        # Calculate price changes for all data points
+        price_changes = []
+        for symbol in df['symbol'].unique():
+            symbol_df = df[df['symbol'] == symbol].copy().sort_values('timestamp')
+            
+            for i in range(len(symbol_df) - 4):  # Need 4 periods ahead
+                current_price = symbol_df.iloc[i]['close']
+                future_price = symbol_df.iloc[i + 4]['close']
+                price_change_pct = (future_price - current_price) / current_price * 100
+                price_changes.append(price_change_pct)
+        
+        price_changes = np.array(price_changes)
+        
+        # Grid search over threshold combinations
+        up_thresholds = np.arange(up_range[0], up_range[1] + up_range[2], up_range[2])
+        down_thresholds = np.arange(down_range[0], down_range[1] + down_range[2], down_range[2])
+        
+        best_kl_div = float('inf')
+        best_up_thresh = LABELING_CONFIG['initial_up_pct']
+        best_down_thresh = LABELING_CONFIG['initial_down_pct']
+        
+        iteration_count = 0
+        
+        for up_thresh in up_thresholds:
+            for down_thresh in down_thresholds:
+                if iteration_count >= max_iterations:
+                    break
+                    
+                # Ensure up > 0 and down < 0
+                if up_thresh <= 0 or down_thresh >= 0:
+                    continue
+                    
+                # Calculate labels with current thresholds
+                buy_mask = price_changes > up_thresh
+                sell_mask = price_changes < down_thresh
+                hold_mask = ~(buy_mask | sell_mask)
+                
+                # Calculate actual distribution
+                total_samples = len(price_changes)
+                if total_samples == 0:
+                    continue
+                    
+                actual_dist = {
+                    'BUY': np.sum(buy_mask) / total_samples,
+                    'SELL': np.sum(sell_mask) / total_samples,
+                    'HOLD': np.sum(hold_mask) / total_samples
+                }
+                
+                # Calculate KL divergence
+                kl_div = self._calculate_kl_divergence(actual_dist, target_dist)
+                
+                if kl_div < best_kl_div:
+                    best_kl_div = kl_div
+                    best_up_thresh = up_thresh
+                    best_down_thresh = down_thresh
+                    
+                    # Early stopping if we're close enough
+                    if kl_div < tolerance:
+                        break
+                        
+                iteration_count += 1
+            
+            if best_kl_div < tolerance:
+                break
+        
+        self.logger.info(f"Threshold calibration completed: up={best_up_thresh:.2f}%, down={best_down_thresh:.2f}%, KL_div={best_kl_div:.4f}, iterations={iteration_count}")
+        
+        return best_up_thresh, best_down_thresh
+
     def _generate_labels(self, df: pd.DataFrame) -> pd.Series:
         """
-        Generate trading labels based on future price movement
+        Generate trading labels based on future price movement with adaptive thresholding
         
         Labels:
         0 = SELL (price will decrease)
         1 = BUY (price will increase) 
         2 = HOLD (minimal price movement)
         """
+        # Calibrate thresholds if LABELING_CONFIG is available
+        try:
+            up_threshold, down_threshold = self._calibrate_label_thresholds(df)
+        except Exception as e:
+            self.logger.warning(f"Threshold calibration failed, using defaults: {e}")
+            up_threshold, down_threshold = 2.0, -2.0
+        
         labels = []
         
         # Group by symbol to calculate labels properly
@@ -315,10 +420,10 @@ class ModelTrainer:
                     
                     price_change_pct = (future_price - current_price) / current_price * 100
                     
-                    # Define thresholds for signals
-                    if price_change_pct > 2.0:  # > 2% increase
+                    # Use calibrated thresholds for signals
+                    if price_change_pct > up_threshold:
                         label = 1  # BUY
-                    elif price_change_pct < -2.0:  # > 2% decrease  
+                    elif price_change_pct < down_threshold:
                         label = 0  # SELL
                     else:
                         label = 2  # HOLD
@@ -329,7 +434,18 @@ class ModelTrainer:
             
             labels.extend(symbol_labels)
         
-        return pd.Series(labels)
+        # Log final distribution
+        labels_series = pd.Series(labels)
+        valid_labels = labels_series.dropna()
+        if len(valid_labels) > 0:
+            distribution = {
+                'BUY': (valid_labels == 1).sum() / len(valid_labels),
+                'SELL': (valid_labels == 0).sum() / len(valid_labels), 
+                'HOLD': (valid_labels == 2).sum() / len(valid_labels)
+            }
+            self.logger.info(f"Final label distribution: BUY={distribution['BUY']:.3f}, SELL={distribution['SELL']:.3f}, HOLD={distribution['HOLD']:.3f}")
+        
+        return labels_series
     
     def _clean_training_data(self, X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
         """Clean training data"""
@@ -403,17 +519,14 @@ class ModelTrainer:
                     'message': 'Performing feature selection'
                 })
                 
-                # Get feature selection configuration
-                feature_selection_mode = get_config_value('feature_selection.mode', 'rfe')
-                target_features = get_config_value('feature_selection.target_features', 30)
-                
-                # Log class distributions - note these are already logged in prepare_training_data
-                # but we maintain this for backward compatibility with existing logging expectations
-                self.logger.info(f"Class distribution (full training): {y_full.value_counts().to_dict()}")
-                self.logger.info(f"Class distribution (selection subset): {selection_y.value_counts().to_dict()}")
+                # Get feature selection configuration from FEATURE_SELECTION_CONFIG
+                min_features = FEATURE_SELECTION_CONFIG.get('min_features', 20)
+                max_iterations = FEATURE_SELECTION_CONFIG.get('max_iterations', 50)
+                tolerance = FEATURE_SELECTION_CONFIG.get('tolerance', 0.003)
+                correlation_threshold = FEATURE_SELECTION_CONFIG.get('correlation_threshold', 0.95)
                 
                 # Feature selection with config-based mode switching
-                self.feature_selector = FeatureSelector(n_features_to_select=target_features)
+                self.feature_selector = FeatureSelector(n_features_to_select=min_features)
                 
                 # Get must-include features (prerequisites and required indicators)
                 required_indicators = self.definitions.get_required_indicators()
@@ -424,19 +537,19 @@ class ModelTrainer:
                 y_recent = selection_y
                 
                 # Perform feature selection based on mode
+                feature_selection_mode = FEATURE_SELECTION_CONFIG.get('mode', 'dynamic')
                 if feature_selection_mode == 'dynamic':
                     self.logger.info("Using dynamic feature selection")
-                    dynamic_config = get_config_value('feature_selection.dynamic', {})
                     selected_features, selection_info = self.feature_selector.select_features_dynamic(
                         X_recent, y_recent, 
                         must_include=must_include,
-                        min_features=dynamic_config.get('min_features', 20),
-                        drop_fraction=dynamic_config.get('drop_fraction', 0.05),
-                        corr_threshold=dynamic_config.get('corr_threshold', 0.95),
-                        tolerance=dynamic_config.get('tolerance', 0.003),
-                        metric=dynamic_config.get('metric', 'macro_f1'),
-                        cv_splits=dynamic_config.get('cv_splits', 3),
-                        max_iterations=dynamic_config.get('max_iterations', 50)
+                        min_features=min_features,
+                        drop_fraction=0.05,  # Use reasonable default
+                        corr_threshold=correlation_threshold,
+                        tolerance=tolerance,
+                        metric='macro_f1',
+                        cv_splits=3,
+                        max_iterations=max_iterations
                     )
                 elif feature_selection_mode == 'hybrid':
                     self.logger.info("Using hybrid feature selection")
