@@ -43,10 +43,11 @@ class TradingEngine:
         self.timeframe = TRADING_CONFIG['timeframe']
         
         # Thread management
-        self.stop_trading = False
+        self._stop_trading = False   # renamed to avoid conflict with method name
         
         self.logger.info(f"Trading engine initialized (Demo: {demo_mode})")
-    
+        self.logger.info(f"[CONFIG] timeframe={self.timeframe} threshold={self.confidence_threshold}")
+
     def start_system(self):
         """Start the complete trading system"""
         try:
@@ -116,21 +117,16 @@ class TradingEngine:
         """Stop the complete trading system"""
         try:
             self.logger.info("Stopping trading system...")
-            
-            # Stop trading
-            self.stop_trading_flag = True
+            # Stop trading loop
+            self._stop_trading = True
             if self.trading_thread and self.trading_thread.is_alive():
                 self.trading_thread.join(timeout=10)
-            
             # Stop position monitoring
             self.position_manager.stop_position_monitoring()
-            
             # Stop data fetching
             self.data_fetcher.stop_real_time_updates()
-            
             self.is_running = False
             self.logger.info("Trading system stopped")
-            
         except Exception as e:
             self.logger.error(f"Error stopping trading system: {e}")
     
@@ -164,7 +160,7 @@ class TradingEngine:
             raise ValueError("Model must be trained before starting trading")
         
         self.is_running = True
-        self.stop_trading = False
+        self._stop_trading = False
         
         # Start position monitoring
         self.position_manager.start_position_monitoring()
@@ -177,19 +173,17 @@ class TradingEngine:
         self.logger.info(f"⏰ Signal generation: Every 4h + enhanced frequency for active trading")
         self.logger.info(f"🎯 Confidence threshold: {self.confidence_threshold * 100:.1f}%")
     
-    def stop_trading(self):
-        """Stop trading"""
-        self.stop_trading = True
+    def stop_trading_loop(self):
+        """Stop trading loop (internal)"""
+        self._stop_trading = True
         self.is_running = False
-        
         if self.trading_thread and self.trading_thread.is_alive():
             self.trading_thread.join(timeout=10)
-        
-        self.logger.info("Trading stopped")
+        self.logger.info("Trading loop stopped")
     
     def _trading_loop(self):
         """Main trading loop"""
-        while not self.stop_trading:
+        while not self._stop_trading:
             try:
                 # Process each symbol
                 for symbol in self.symbols:
@@ -425,24 +419,32 @@ class TradingEngine:
             self.logger.error(f"Error recording signal: {e}")
     
     def _is_new_timeframe(self, symbol: str) -> bool:
-        """Check if we should generate a new trading signal for symbol"""
-        # For more active trading, check every hour but bias towards 4-hour boundaries
-        current_hour = datetime.now().hour
-        current_minute = datetime.now().minute
+        """
+        Decide if it's time to generate a new signal.
+        حالت تست: اگر timeframe = '1m' باشد همیشه True
+        """
+        now = datetime.now()
+        m = now.minute
+        h = now.hour
         
-        # Always signal at 4-hour boundaries (0, 4, 8, 12, 16, 20)
-        if current_hour % 4 == 0:
+        if self.timeframe == '1m':
             return True
+        if self.timeframe == '5m':
+            return (m % 5 == 0)
+        if self.timeframe == '15m':
+            return (m % 15 == 0)
+        if self.timeframe == '1h':
+            return m == 0
+        if self.timeframe == '4h':
+            return (h % 4 == 0 and m == 0)
         
-        # Also signal at half-way points (2, 6, 10, 14, 18, 22) for more activity
-        if current_hour % 4 == 2:
+        # fallback همان منطق قدیم
+        if h % 4 == 0:
             return True
-        
-        # Add some randomization to prevent predictable patterns
-        # Check every 15 minutes with 10% probability for more frequent signals
-        if current_minute % 15 == 0 and (current_hour * 60 + current_minute) % 100 < 10:
+        if h % 4 == 2:
             return True
-        
+        if m % 15 == 0 and (h * 60 + m) % 100 < 10:
+            return True
         return False
     
     def _update_trading_metrics(self):
