@@ -83,6 +83,8 @@ DATA_CONFIG = {
     'max_retries': 3,
     'timeout': 30,
     'min_4h_candles': 800,  # Minimum aligned 4h candles required for training
+    'max_4h_selection_candles': 800,  # Maximum candles for feature selection subset
+    'max_4h_training_candles': 2000,  # Maximum candles for full training (0 or None means use all)
 }
 
 # Logging Configuration
