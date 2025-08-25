@@ -48,16 +48,18 @@ class ModelTrainer:
         return self.training_progress.copy()
     
     def prepare_training_data(self, symbols: List[str] = None, 
-                            train_samples: int = None) -> Tuple[pd.DataFrame, pd.Series]:
+                            train_samples: int = None) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
         """
-        Prepare training data from database with indicators
+        Prepare training data from database with indicators, returning separate full and selection datasets
         
         Args:
             symbols: List of symbols to include
             train_samples: Number of samples to use for training
             
         Returns:
-            Tuple of (features, labels)
+            Tuple of (X_full, y_full, selection_X, selection_y)
+            - X_full, y_full: Full training dataset (up to max_4h_training_candles)
+            - selection_X, selection_y: Recent subset for feature selection (last max_4h_selection_candles)
         """
         try:
             self.training_progress.update({
@@ -69,6 +71,11 @@ class ModelTrainer:
             symbols = symbols or TRADING_CONFIG['symbols']
             train_samples = train_samples or ML_CONFIG['training_data_size']
             
+            # Get configuration for 4h timeframe limits
+            selection_limit = DATA_CONFIG.get('max_4h_selection_candles', 800)
+            training_limit = DATA_CONFIG.get('max_4h_training_candles', 2000)
+            
+            self.logger.info(f"Preparing data (timeframe={TRADING_CONFIG['timeframe']}) selection_limit={selection_limit} training_limit={training_limit}")
             self.logger.info(f"Preparing training data for symbols: {symbols}")
             
             # Load data from database
@@ -84,6 +91,7 @@ class ModelTrainer:
                 ).order_by(Candle.timestamp.desc()).limit(train_samples // len(symbols))
                 
                 candles = query.all()
+                raw_count = len(candles)
                 
                 if not candles:
                     self.logger.warning(f"No data found for {symbol}")
@@ -102,16 +110,20 @@ class ModelTrainer:
                 
                 symbol_data = symbol_data.sort_values('timestamp').reset_index(drop=True)
                 
-                # For 4h timeframe, filter to aligned candles and limit to last 800
+                # For 4h timeframe, filter to aligned candles
                 if TRADING_CONFIG['timeframe'] == '4h':
                     aligned_mask = symbol_data['timestamp'].apply(self._is_aligned_4h)
                     symbol_data = symbol_data[aligned_mask].reset_index(drop=True)
+                    aligned_count = len(symbol_data)
 
-                    max_4h_candles = DATA_CONFIG.get('min_4h_candles', 800)
-                    if len(symbol_data) > max_4h_candles:
-                        symbol_data = symbol_data.tail(max_4h_candles).reset_index(drop=True)
-
-                    self.logger.info(f"Filtered to {len(symbol_data)} aligned 4h candles for {symbol}")
+                    # Apply training limit AFTER alignment (retain newest rows if exceeding limit)
+                    if training_limit and training_limit > 0 and len(symbol_data) > training_limit:
+                        symbol_data = symbol_data.tail(training_limit).reset_index(drop=True)
+                    
+                    used_for_training = len(symbol_data)
+                    self.logger.info(f"[{symbol}] raw={raw_count} aligned={aligned_count} used_for_training={used_for_training}")
+                else:
+                    self.logger.info(f"[{symbol}] raw={raw_count} used_for_training={len(symbol_data)}")
                 
                 all_data.append(symbol_data)
             
@@ -153,27 +165,56 @@ class ModelTrainer:
                 'message': 'Generating trading labels'
             })
             
-            # Generate labels
+            # Generate labels across full data
             labels = self._generate_labels(features_df)
             
             # Remove non-feature columns
             feature_columns = [col for col in features_df.columns 
                              if col not in ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume']]
             
-            X = features_df[feature_columns].copy()
-            y = labels
+            X_full = features_df[feature_columns].copy()
+            y_full = labels
             
-            # Clean data
-            X = self._clean_training_data(X, y)
+            # Clean full data
+            X_full = self._clean_training_data(X_full, y_full)
             
-            # Remove rows where labels are NaN
-            valid_idx = ~y.isna()
-            X = X[valid_idx]
-            y = y[valid_idx]
+            # Remove rows where labels are NaN from full data
+            valid_idx = ~y_full.isna()
+            X_full = X_full[valid_idx]
+            y_full = y_full[valid_idx]
             
-            self.logger.info(f"Training data prepared: {len(X)} samples, {len(X.columns)} features")
+            # Build selection subset post-indicator/label generation to avoid recomputation
+            # Take last selection_limit samples per symbol from the already processed data
+            selection_indices = []
+            for symbol in symbols:
+                symbol_mask = features_df['symbol'] == symbol
+                symbol_indices = features_df[symbol_mask].index
+                
+                if len(symbol_indices) > 0:
+                    # Get the last selection_limit indices for this symbol
+                    if selection_limit and len(symbol_indices) > selection_limit:
+                        symbol_selection_indices = symbol_indices[-selection_limit:]
+                    else:
+                        symbol_selection_indices = symbol_indices
+                    selection_indices.extend(symbol_selection_indices.tolist())
             
-            return X, y
+            # Create selection subset using the indices
+            selection_mask = X_full.index.isin(selection_indices)
+            selection_X = X_full[selection_mask].copy()
+            selection_y = y_full[selection_mask].copy()
+            
+            # Log summary
+            selection_rows = len(selection_X)
+            self.logger.info(f"Selection subset built: rows={selection_rows} (~ {selection_limit} per symbol)")
+            self.logger.info(f"Final Full Training Set: rows={len(X_full)} features={len(X_full.columns)} | Selection Set: rows={len(selection_X)}")
+            
+            # Log class distributions
+            full_class_dist = y_full.value_counts().to_dict()
+            selection_class_dist = selection_y.value_counts().to_dict()
+            self.logger.info(f"Class distribution (full): {full_class_dist}")
+            self.logger.info(f"Class distribution (selection subset): {selection_class_dist}")
+            
+            return X_full, y_full, selection_X, selection_y
             
         except Exception as e:
             self.logger.error(f"Error preparing training data: {e}")
@@ -270,13 +311,13 @@ class ModelTrainer:
             })
             
             # Prepare training data
-            X, y = self.prepare_training_data()
+            X_full, y_full, selection_X, selection_y = self.prepare_training_data()
             
             # Update training record with data info
             session = db_connection.get_session()
             training_record = session.query(ModelTraining).get(training_id)
-            training_record.total_samples = len(X)
-            training_record.total_indicators = len(X.columns)
+            training_record.total_samples = len(X_full)
+            training_record.total_indicators = len(X_full.columns)
             session.commit()
             session.close()
             
@@ -290,8 +331,10 @@ class ModelTrainer:
             feature_selection_mode = get_config_value('feature_selection.mode', 'rfe')
             target_features = get_config_value('feature_selection.target_features', 30)
             
-            # Log class distribution
-            self.logger.info(f"Class distribution: {y.value_counts().to_dict()}")
+            # Log class distributions - note these are already logged in prepare_training_data
+            # but we maintain this for backward compatibility with existing logging expectations
+            self.logger.info(f"Class distribution (full training): {y_full.value_counts().to_dict()}")
+            self.logger.info(f"Class distribution (selection subset): {selection_y.value_counts().to_dict()}")
             
             # Feature selection with config-based mode switching
             self.feature_selector = FeatureSelector(n_features_to_select=target_features)
@@ -300,10 +343,9 @@ class ModelTrainer:
             required_indicators = self.definitions.get_required_indicators()
             must_include = list(required_indicators.keys())
             
-            # Get features to select from recent data
-            recent_samples = min(ML_CONFIG.get('rfe_sample_size', 5000), len(X))
-            X_recent = X.tail(recent_samples)
-            y_recent = y.tail(recent_samples)
+            # Use selection subset for feature selection (recent data regime)
+            X_recent = selection_X
+            y_recent = selection_y
             
             # Perform feature selection based on mode
             if feature_selection_mode == 'dynamic':
@@ -355,8 +397,8 @@ class ModelTrainer:
                     self.logger.info(f"  ... and {len(selection_info['history']) - 5} more iterations")
                 self.logger.info("===========================================")
             
-            # Filter training data to selected features
-            X_selected = X[selected_features]
+            # Filter training data to selected features (apply to full training set)
+            X_selected = X_full[selected_features]
             
             self.training_progress.update({
                 'stage': 'model_training',
@@ -364,12 +406,12 @@ class ModelTrainer:
                 'message': 'Training AI model'
             })
             
-            # Split data
+            # Split data (using full training dataset)
             X_train, X_test, y_train, y_test = train_test_split(
-                X_selected, y, 
+                X_selected, y_full, 
                 test_size=ML_CONFIG['test_size'],
                 random_state=ML_CONFIG['random_state'],
-                stratify=y
+                stratify=y_full
             )
             
             # Scale features
