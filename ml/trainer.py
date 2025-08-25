@@ -14,7 +14,7 @@ from indicators.calculator import IndicatorCalculator
 from indicators.definitions import IndicatorDefinitions
 from database.connection import db_connection
 from database.models import Candle, ModelTraining
-from config.settings import ML_CONFIG, TRADING_CONFIG, DATA_CONFIG
+from config.settings import ML_CONFIG, TRADING_CONFIG, DATA_CONFIG, FEATURE_SELECTION_CONFIG, XGB_PRO_CONFIG
 from config.config_loader import get_config_value
 
 class ModelTrainer:
@@ -74,29 +74,47 @@ class ModelTrainer:
             # Get configuration for 4h timeframe limits
             selection_limit = DATA_CONFIG.get('max_4h_selection_candles', 800)
             training_limit = DATA_CONFIG.get('max_4h_training_candles', 2000)
+            use_all_history = DATA_CONFIG.get('use_all_history', False)
             
-            self.logger.info(f"Preparing data (timeframe={TRADING_CONFIG['timeframe']}) selection_limit={selection_limit} training_limit={training_limit}")
+            # If use_all_history is True, override training_limit to unlimited
+            if use_all_history:
+                training_limit = 0  # 0 means unlimited
+            
+            self.logger.info(f"Preparing data (timeframe={TRADING_CONFIG['timeframe']}) use_all_history={use_all_history} selection_limit={selection_limit} training_limit={training_limit}")
             self.logger.info(f"Preparing training data for symbols: {symbols}")
             
             # Load data from database
             session = db_connection.get_session()
             
             all_data = []
+            total_raw_rows = 0
+            total_aligned_rows = 0
+            earliest_ts = None
+            latest_ts = None
+            
             for symbol in symbols:
                 self.logger.info(f"Loading data for {symbol}")
                 
                 # Get candlestick data, ordered by timestamp
-                query = session.query(Candle).filter(
-                    Candle.symbol == symbol
-                ).order_by(Candle.timestamp.desc()).limit(train_samples // len(symbols))
+                if use_all_history:
+                    # Fetch ALL rows for this symbol without LIMIT
+                    query = session.query(Candle).filter(
+                        Candle.symbol == symbol
+                    ).order_by(Candle.timestamp.asc())  # ASC for chronological order when loading all
+                else:
+                    # Use existing limit-based logic  
+                    query = session.query(Candle).filter(
+                        Candle.symbol == symbol
+                    ).order_by(Candle.timestamp.desc()).limit(train_samples // len(symbols))
                 
                 candles = query.all()
                 raw_count = len(candles)
+                total_raw_rows += raw_count
                 
                 if not candles:
                     self.logger.warning(f"No data found for {symbol}")
                     continue
-                
+
                 # Convert to DataFrame
                 symbol_data = pd.DataFrame([{
                     'timestamp': candle.timestamp,
@@ -108,20 +126,40 @@ class ModelTrainer:
                     'symbol': candle.symbol
                 } for candle in candles])
                 
+                # Sort chronologically for proper indicator calculation
                 symbol_data = symbol_data.sort_values('timestamp').reset_index(drop=True)
                 
+                # Track timestamps for span calculation
+                if len(symbol_data) > 0:
+                    symbol_earliest = symbol_data['timestamp'].min()
+                    symbol_latest = symbol_data['timestamp'].max()
+                    if earliest_ts is None or symbol_earliest < earliest_ts:
+                        earliest_ts = symbol_earliest
+                    if latest_ts is None or symbol_latest > latest_ts:
+                        latest_ts = symbol_latest
+
                 # For 4h timeframe, filter to aligned candles
                 if TRADING_CONFIG['timeframe'] == '4h':
                     aligned_mask = symbol_data['timestamp'].apply(self._is_aligned_4h)
                     symbol_data = symbol_data[aligned_mask].reset_index(drop=True)
                     aligned_count = len(symbol_data)
+                    total_aligned_rows += aligned_count
 
-                    # Apply training limit AFTER alignment (retain newest rows if exceeding limit)
-                    if training_limit and training_limit > 0 and len(symbol_data) > training_limit:
+                    # Apply training limit ONLY if not using all history and limit > 0
+                    if not use_all_history and training_limit and training_limit > 0 and len(symbol_data) > training_limit:
                         symbol_data = symbol_data.tail(training_limit).reset_index(drop=True)
                     
                     used_for_training = len(symbol_data)
-                    self.logger.info(f"[{symbol}] raw={raw_count} aligned={aligned_count} used_for_training={used_for_training}")
+                    
+                    # Calculate span in days for this symbol
+                    if len(symbol_data) > 0:
+                        span_seconds = symbol_data['timestamp'].max() - symbol_data['timestamp'].min()
+                        span_days = span_seconds / (24 * 3600)
+                        oldest_ts = symbol_data['timestamp'].min()
+                        newest_ts = symbol_data['timestamp'].max()
+                        self.logger.info(f"[{symbol}] total_raw={raw_count} aligned_4h={aligned_count} used_for_training={used_for_training} oldest_ts={oldest_ts} newest_ts={newest_ts} span_days={span_days:.1f}")
+                    else:
+                        self.logger.info(f"[{symbol}] total_raw={raw_count} aligned_4h={aligned_count} used_for_training={used_for_training}")
                 else:
                     self.logger.info(f"[{symbol}] raw={raw_count} used_for_training={len(symbol_data)}")
                 
@@ -131,10 +169,17 @@ class ModelTrainer:
             
             if not all_data:
                 raise ValueError("No training data available")
-            
+
             # Combine all symbols
             combined_data = pd.concat(all_data, ignore_index=True)
             combined_data = combined_data.sort_values(['symbol', 'timestamp']).reset_index(drop=True)
+            
+            # Calculate full dataset summary
+            if earliest_ts and latest_ts:
+                total_span_days = (latest_ts - earliest_ts) / (24 * 3600)
+                self.logger.info(f"FULL DATASET SUMMARY: rows={len(combined_data)} symbols={len(symbols)} total_raw={total_raw_rows} aligned_4h={total_aligned_rows} earliest={earliest_ts} latest={latest_ts} span_days={total_span_days:.1f}")
+            else:
+                self.logger.info(f"FULL DATASET SUMMARY: rows={len(combined_data)} symbols={len(symbols)} total_raw={total_raw_rows} aligned_4h={total_aligned_rows}")
             
             self.logger.info(f"Loaded {len(combined_data)} total samples")
             
@@ -321,81 +366,110 @@ class ModelTrainer:
             session.commit()
             session.close()
             
-            self.training_progress.update({
-                'stage': 'feature_selection',
-                'progress': 60,
-                'message': 'Performing feature selection'
-            })
+            # Check if feature selection is enabled
+            feature_selection_enabled = FEATURE_SELECTION_CONFIG.get('enabled', True)
             
-            # Get feature selection configuration
-            feature_selection_mode = get_config_value('feature_selection.mode', 'rfe')
-            target_features = get_config_value('feature_selection.target_features', 30)
-            
-            # Log class distributions - note these are already logged in prepare_training_data
-            # but we maintain this for backward compatibility with existing logging expectations
-            self.logger.info(f"Class distribution (full training): {y_full.value_counts().to_dict()}")
-            self.logger.info(f"Class distribution (selection subset): {selection_y.value_counts().to_dict()}")
-            
-            # Feature selection with config-based mode switching
-            self.feature_selector = FeatureSelector(n_features_to_select=target_features)
-            
-            # Get must-include features (prerequisites and required indicators)
-            required_indicators = self.definitions.get_required_indicators()
-            must_include = list(required_indicators.keys())
-            
-            # Use selection subset for feature selection (recent data regime)
-            X_recent = selection_X
-            y_recent = selection_y
-            
-            # Perform feature selection based on mode
-            if feature_selection_mode == 'dynamic':
-                self.logger.info("Using dynamic feature selection")
-                dynamic_config = get_config_value('feature_selection.dynamic', {})
-                selected_features, selection_info = self.feature_selector.select_features_dynamic(
-                    X_recent, y_recent, 
-                    must_include=must_include,
-                    min_features=dynamic_config.get('min_features', 20),
-                    drop_fraction=dynamic_config.get('drop_fraction', 0.05),
-                    corr_threshold=dynamic_config.get('corr_threshold', 0.95),
-                    tolerance=dynamic_config.get('tolerance', 0.003),
-                    metric=dynamic_config.get('metric', 'macro_f1'),
-                    cv_splits=dynamic_config.get('cv_splits', 3),
-                    max_iterations=dynamic_config.get('max_iterations', 50)
-                )
-            elif feature_selection_mode == 'hybrid':
-                self.logger.info("Using hybrid feature selection")
-                selected_features, selection_info = self.feature_selector.select_features_hybrid(
-                    X_recent, y_recent, must_include=must_include
-                )
-            else:  # default to RFE
-                self.logger.info("Using RFE feature selection")
-                selected_features, selection_info = self.feature_selector.select_features_rfe(
-                    X_recent, y_recent, must_include=must_include
-                )
-            
-            self.logger.info(f"Selected {len(selected_features)} features using {feature_selection_mode} method")
-            self.logger.info(f"Selection details: {selection_info}")
-            
-            # Enhanced logging for dynamic feature selection
-            if feature_selection_mode == 'dynamic' and 'history' in selection_info:
-                self.logger.info("=== Dynamic Feature Selection Summary ===")
-                self.logger.info(f"Baseline score: {selection_info.get('baseline_score', 0.0):.4f}")
-                self.logger.info(f"Final score: {selection_info.get('final_score', 0.0):.4f}")
-                self.logger.info(f"Improvement: {selection_info.get('improvement', 0.0):.4f}")
-                self.logger.info(f"Total iterations: {selection_info.get('iterations', 0)}")
-                self.logger.info(f"Correlation removed: {selection_info.get('correlation_removed', 0)} features")
+            if feature_selection_enabled:
+                self.training_progress.update({
+                    'stage': 'feature_selection',
+                    'progress': 60,
+                    'message': 'Performing feature selection'
+                })
                 
-                # Log iteration details
-                for entry in selection_info['history'][:5]:  # Log first 5 iterations
-                    iteration = entry.get('iteration', 0)
-                    score = entry.get('score', 0.0)
-                    feature_count = entry.get('features_count', 0)
-                    action = entry.get('action', 'unknown')
-                    self.logger.info(f"  Iteration {iteration}: {score:.4f} score, {feature_count} features, {action}")
+                # Get feature selection configuration
+                feature_selection_mode = get_config_value('feature_selection.mode', 'rfe')
+                target_features = get_config_value('feature_selection.target_features', 30)
                 
-                if len(selection_info['history']) > 5:
-                    self.logger.info(f"  ... and {len(selection_info['history']) - 5} more iterations")
-                self.logger.info("===========================================")
+                # Log class distributions - note these are already logged in prepare_training_data
+                # but we maintain this for backward compatibility with existing logging expectations
+                self.logger.info(f"Class distribution (full training): {y_full.value_counts().to_dict()}")
+                self.logger.info(f"Class distribution (selection subset): {selection_y.value_counts().to_dict()}")
+                
+                # Feature selection with config-based mode switching
+                self.feature_selector = FeatureSelector(n_features_to_select=target_features)
+                
+                # Get must-include features (prerequisites and required indicators)
+                required_indicators = self.definitions.get_required_indicators()
+                must_include = list(required_indicators.keys())
+                
+                # Use selection subset for feature selection (recent data regime)
+                X_recent = selection_X
+                y_recent = selection_y
+                
+                # Perform feature selection based on mode
+                if feature_selection_mode == 'dynamic':
+                    self.logger.info("Using dynamic feature selection")
+                    dynamic_config = get_config_value('feature_selection.dynamic', {})
+                    selected_features, selection_info = self.feature_selector.select_features_dynamic(
+                        X_recent, y_recent, 
+                        must_include=must_include,
+                        min_features=dynamic_config.get('min_features', 20),
+                        drop_fraction=dynamic_config.get('drop_fraction', 0.05),
+                        corr_threshold=dynamic_config.get('corr_threshold', 0.95),
+                        tolerance=dynamic_config.get('tolerance', 0.003),
+                        metric=dynamic_config.get('metric', 'macro_f1'),
+                        cv_splits=dynamic_config.get('cv_splits', 3),
+                        max_iterations=dynamic_config.get('max_iterations', 50)
+                    )
+                elif feature_selection_mode == 'hybrid':
+                    self.logger.info("Using hybrid feature selection")
+                    selected_features, selection_info = self.feature_selector.select_features_hybrid(
+                        X_recent, y_recent, must_include=must_include
+                    )
+                else:  # default to RFE
+                    self.logger.info("Using RFE feature selection")
+                    selected_features, selection_info = self.feature_selector.select_features_rfe(
+                        X_recent, y_recent, must_include=must_include
+                    )
+                
+                self.logger.info(f"Selected {len(selected_features)} features using {feature_selection_mode} method")
+                self.logger.info(f"Selection details: {selection_info}")
+                
+                # Enhanced logging for dynamic feature selection
+                if feature_selection_mode == 'dynamic' and 'history' in selection_info:
+                    self.logger.info("=== Dynamic Feature Selection Summary ===")
+                    self.logger.info(f"Baseline score: {selection_info.get('baseline_score', 0.0):.4f}")
+                    self.logger.info(f"Final score: {selection_info.get('final_score', 0.0):.4f}")
+                    self.logger.info(f"Improvement: {selection_info.get('improvement', 0.0):.4f}")
+                    self.logger.info(f"Total iterations: {selection_info.get('iterations', 0)}")
+                    self.logger.info(f"Correlation removed: {selection_info.get('correlation_removed', 0)} features")
+                    
+                    # Log iteration details
+                    for entry in selection_info['history'][:5]:  # Log first 5 iterations
+                        iteration = entry.get('iteration', 0)
+                        score = entry.get('score', 0.0)
+                        feature_count = entry.get('features_count', 0)
+                        action = entry.get('action', 'unknown')
+                        self.logger.info(f"  Iteration {iteration}: {score:.4f} score, {feature_count} features, {action}")
+                    
+                    if len(selection_info['history']) > 5:
+                        self.logger.info(f"  ... and {len(selection_info['history']) - 5} more iterations")
+                    self.logger.info("===========================================")
+            else:
+                # Feature selection disabled - use all available features
+                self.logger.info("Feature selection disabled via config; using all available features")
+                feature_columns = [col for col in X_full.columns 
+                                 if col not in ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume']]
+                selected_features = feature_columns
+                selection_info = {
+                    'method': 'disabled_all_features',
+                    'total_features': len(selected_features),
+                    'note': 'Feature selection bypassed via FEATURE_SELECTION_CONFIG.enabled=False'
+                }
+                self.logger.info(f"Using all {len(selected_features)} features (feature selection disabled)")
+                
+                self.training_progress.update({
+                    'stage': 'feature_selection_bypassed',
+                    'progress': 60,
+                    'message': f'Feature selection bypassed - using all {len(selected_features)} features'
+                })
+            
+            # Log comprehensive training setup before starting model training
+            features_before_selection = len(X_full.columns)
+            features_after_selection = len(selected_features)
+            xgb_trees = XGB_PRO_CONFIG.get('n_estimators', 8000)
+            
+            self.logger.info(f"FULL 4h TRAINING ROWS={len(X_full)} FEATURES(before selection)={features_before_selection} FEATURE_SELECTION_ENABLED={feature_selection_enabled} FEATURES_FINAL={features_after_selection} XGB_TREES={xgb_trees}")
             
             # Filter training data to selected features (apply to full training set)
             X_selected = X_full[selected_features]
@@ -497,8 +571,13 @@ class ModelTrainer:
                 'selected_features': selected_features,
                 'selection_info': enhanced_selection_info,
                 'training_metrics': training_metrics,
-                'model_path': model_path
+                'model_path': model_path,
+                'feature_selection_enabled': feature_selection_enabled  # Add flag to result
             }
+            
+            # Add note about feature selection if it was disabled
+            if not feature_selection_enabled:
+                result['feature_selection_note'] = 'Feature selection bypassed via FEATURE_SELECTION_CONFIG.enabled=False'
             
             self.logger.info(f"Training completed successfully: {result}")
             

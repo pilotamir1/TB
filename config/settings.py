@@ -84,7 +84,8 @@ DATA_CONFIG = {
     'timeout': 30,
     'min_4h_candles': 800,  # Minimum aligned 4h candles required for training
     'max_4h_selection_candles': 800,  # Maximum candles for feature selection subset
-    'max_4h_training_candles': 2000,  # Maximum candles for full training (0 or None means use all)
+    'max_4h_training_candles': 0,  # Maximum candles for full training (0 or None means use all)
+    'use_all_history': True,  # When True, fetch ALL historical data without limits
 }
 
 # Logging Configuration
@@ -94,4 +95,28 @@ LOGGING_CONFIG = {
     'file': 'logs/trading_bot.log',
     'max_size': 10 * 1024 * 1024,  # 10MB
     'backup_count': 5,
+}
+
+# Feature Selection Configuration
+FEATURE_SELECTION_CONFIG = {
+    'enabled': False,  # When False, use all available features without dynamic selection
+    'method': 'dynamic_iterative_pruning',  # Method to use when enabled
+    'correlation_threshold': 0.95,  # Correlation threshold for pruning
+    'max_features': 50,  # Maximum features when selection is enabled
+}
+
+# Professional XGBoost Configuration
+XGB_PRO_CONFIG = {
+    'n_estimators': 8000,  # Large number of trees for professional model (can be increased for larger models)
+    'max_depth': 12,  # Deep trees for complex pattern recognition
+    'learning_rate': 0.01,  # Low learning rate for better generalization with many trees
+    'early_stopping_rounds': 300,  # Higher patience for early stopping (set to 0 to disable)
+    'subsample': 0.8,  # Subsampling for regularization
+    'colsample_bytree': 0.8,  # Feature subsampling
+    'colsample_bylevel': 0.8,  # Additional feature subsampling
+    'reg_alpha': 0.1,  # L1 regularization
+    'reg_lambda': 1.0,  # L2 regularization
+    'min_child_weight': 3,  # Minimum weight in child nodes
+    'gamma': 0.1,  # Minimum split loss
+    'tree_method': 'hist',  # Efficient tree construction method
 }
