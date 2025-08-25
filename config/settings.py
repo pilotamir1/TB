@@ -99,9 +99,14 @@ LOGGING_CONFIG = {
 
 # Feature Selection Configuration
 FEATURE_SELECTION_CONFIG = {
-    'enabled': False,  # When False, use all available features without dynamic selection
+    'enabled': True,  # Enable dynamic feature selection on recent window
+    'mode': 'dynamic',  # Dynamic selection mode
+    'selection_window_4h': 800,  # Use most recent 800 4h candles for feature selection
+    'min_features': 20,  # Minimum features to retain
     'method': 'dynamic_iterative_pruning',  # Method to use when enabled
     'correlation_threshold': 0.95,  # Correlation threshold for pruning
+    'tolerance': 0.003,  # Tolerance for improvement in feature selection
+    'max_iterations': 50,  # Maximum iterations for dynamic selection
     'max_features': 50,  # Maximum features when selection is enabled
 }
 
@@ -119,4 +124,16 @@ XGB_PRO_CONFIG = {
     'min_child_weight': 3,  # Minimum weight in child nodes
     'gamma': 0.1,  # Minimum split loss
     'tree_method': 'hist',  # Efficient tree construction method
+}
+
+# Adaptive Labeling Configuration
+LABELING_CONFIG = {
+    'target_distribution': {'SELL': 0.40, 'BUY': 0.40, 'HOLD': 0.20},  # Target class distribution
+    'initial_up_pct': 2.0,  # Initial up threshold percentage
+    'initial_down_pct': -2.0,  # Initial down threshold percentage 
+    'search_up_range': [0.4, 3.0, 0.1],  # [start, end, step] for up threshold search
+    'search_down_range': [-3.0, -0.4, 0.1],  # [start, end, step] for down threshold search
+    'optimization_metric': 'kl_divergence',  # Distance metric for distribution fit
+    'max_search_iterations': 100,  # Maximum iterations for threshold search
+    'convergence_tolerance': 0.01,  # Tolerance for distribution convergence
 }
