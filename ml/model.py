@@ -23,6 +23,8 @@ class TradingModel:
         self.is_trained = False
         self.model_version = None
         self.confidence_threshold = 0.7
+        # Map عدد کلاس ها -> لیبل نهایی (طبق دیتای فعلی)
+        self.label_map = {0: 'SELL', 1: 'BUY', 2: 'HOLD'}
         self.logger = logging.getLogger(__name__)
         
         # Initialize model based on type
@@ -132,6 +134,7 @@ class TradingModel:
             # NEW: log class mapping
             if hasattr(self.model, "classes_"):
                 self.logger.info(f"MODEL CLASS ORDER: {self.model.classes_.tolist()}  (expected 0=SELL,1=BUY,2=HOLD)")
+                self.logger.debug(f"LABEL MAP USED: {self.label_map}")
 
             # Calculate training metrics
             train_accuracy = self.model.score(X_train, y_train)
@@ -216,22 +219,36 @@ class TradingModel:
             # Convert to DataFrame with correct column order
             X = pd.DataFrame([features])[self.feature_names]
             
-            # Get probabilities
-            probabilities = self.model.predict_proba(X)[0]
-            prediction = self.model.predict(X)[0]
-            confidence = np.max(probabilities)
+            probs_row = self.model.predict_proba(X)[0]
+            classes = list(self.model.classes_)  # ترتیب واقعی ستون‌های احتمال
             
-            # Map prediction to signal
-            signal_map = {0: 'SELL', 1: 'BUY', 2: 'HOLD'}
-            signal = signal_map.get(prediction, 'HOLD')
+            # ساخت دیکشنری احتمال با استفاده از کلاس‌های واقعی
+            proba_dict = {}
+            for cls_value, p in zip(classes, probs_row):
+                label = self.label_map.get(cls_value, str(cls_value))
+                proba_dict[label] = float(p)
+            
+            # پیدا کردن سیگنال برنده
+            winner_index = int(np.argmax(probs_row))
+            winner_class_value = classes[winner_index]
+            signal = self.label_map.get(winner_class_value, 'HOLD')
+            confidence = float(probs_row[winner_index])
+            
+            # اطمینان از وجود همه کلیدها
+            for k in ['BUY', 'SELL', 'HOLD']:
+                if k not in proba_dict:
+                    proba_dict[k] = 0.0
+            
+            # دیباگ (بعداً خواستی پاک کن)
+            self.logger.debug(f"PRED_DEBUG classes={classes} probs={probs_row.tolist()} mapped={proba_dict} pick={signal} conf={confidence:.3f}")
             
             return {
                 'signal': signal,
                 'confidence': confidence,
                 'probabilities': {
-                    'SELL': probabilities[0],
-                    'BUY': probabilities[1] if len(probabilities) > 1 else 0.0,
-                    'HOLD': probabilities[2] if len(probabilities) > 2 else 0.0
+                    'BUY': proba_dict['BUY'],
+                    'SELL': proba_dict['SELL'],
+                    'HOLD': proba_dict['HOLD']
                 },
                 'meets_threshold': confidence >= self.confidence_threshold
             }
@@ -268,7 +285,8 @@ class TradingModel:
                 'model_type': self.model_type,
                 'model_version': self.model_version,
                 'confidence_threshold': self.confidence_threshold,
-                'is_trained': self.is_trained
+                'is_trained': self.is_trained,
+                'label_map': self.label_map
             }
             
             joblib.dump(model_data, filepath)
@@ -294,6 +312,9 @@ class TradingModel:
             self.model_version = model_data['model_version']
             self.confidence_threshold = model_data['confidence_threshold']
             self.is_trained = model_data['is_trained']
+            
+            if 'label_map' in model_data:
+                self.label_map = model_data['label_map']
             
             self.logger.info(f"Model loaded from {filepath}")
             return True
