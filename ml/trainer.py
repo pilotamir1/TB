@@ -174,6 +174,14 @@ class ModelTrainer:
             combined_data = pd.concat(all_data, ignore_index=True)
             combined_data = combined_data.sort_values(['symbol', 'timestamp']).reset_index(drop=True)
             
+            # Performance monitoring: log memory usage after data loading
+            try:
+                import psutil
+                memory_mb = psutil.Process().memory_info().rss / 1024 / 1024
+                self.logger.info(f"Memory usage after data loading: {memory_mb:.1f} MB")
+            except ImportError:
+                self.logger.info("psutil not available - skipping memory monitoring")
+            
             # Calculate full dataset summary
             if earliest_ts and latest_ts:
                 total_span_days = (latest_ts - earliest_ts) / (24 * 3600)
@@ -197,12 +205,27 @@ class ModelTrainer:
                     self.logger.info(f"Calculating indicators for {symbol} ({len(symbol_df)} samples)")
                     symbol_df_with_indicators = self.calculator.calculate_all_indicators(symbol_df)
                     processed_data.append(symbol_df_with_indicators)
+                    
+                    # Memory management: free the symbol_df copy
+                    del symbol_df
             
             if not processed_data:
                 raise ValueError("No processed data available")
             
-            # Combine processed data
+            # Combine processed data (memory-safe: process in place)
             features_df = pd.concat(processed_data, ignore_index=True)
+            
+            # Memory management: clear processed_data list and combined_data
+            del processed_data
+            del combined_data
+            
+            # Performance monitoring: log memory usage after indicator calculation
+            try:
+                import psutil
+                memory_mb = psutil.Process().memory_info().rss / 1024 / 1024
+                self.logger.info(f"Memory usage after indicator calculation: {memory_mb:.1f} MB")
+            except ImportError:
+                pass
             
             self.training_progress.update({
                 'stage': 'label_generation',
@@ -213,11 +236,12 @@ class ModelTrainer:
             # Generate labels across full data
             labels = self._generate_labels(features_df)
             
-            # Remove non-feature columns
+            # Remove non-feature columns (memory-efficient: use column selection)
             feature_columns = [col for col in features_df.columns 
                              if col not in ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume']]
             
-            X_full = features_df[feature_columns].copy()
+            # Memory-safe feature extraction
+            X_full = features_df[feature_columns]
             y_full = labels
             
             # Clean full data
@@ -243,10 +267,13 @@ class ModelTrainer:
                         symbol_selection_indices = symbol_indices
                     selection_indices.extend(symbol_selection_indices.tolist())
             
-            # Create selection subset using the indices
+            # Create selection subset using the indices (memory-efficient: avoid copy when possible)
             selection_mask = X_full.index.isin(selection_indices)
-            selection_X = X_full[selection_mask].copy()
-            selection_y = y_full[selection_mask].copy()
+            selection_X = X_full[selection_mask]
+            selection_y = y_full[selection_mask]
+            
+            # Memory management: can now free features_df since we have X_full and selection sets
+            del features_df
             
             # Log summary
             selection_rows = len(selection_X)
