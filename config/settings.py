@@ -78,8 +78,8 @@ WEB_CONFIG = {
 
 # Data Update Configuration
 DATA_CONFIG = {
-    'update_interval': 60,  # Update every 300 seconds for 4h timeframe
-    'batch_size': 100,
+    'update_interval': 60,  # Update every 60 seconds (1 minute) to collect data sequentially
+    'batch_size': 5,  # Reduced to 5 to avoid API pressure
     'max_retries': 3,
     'timeout': 30,
     'min_1m_candles': 1440,  # Minimum aligned 4h candles required for training
