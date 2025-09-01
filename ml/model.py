@@ -226,7 +226,22 @@ class TradingModel:
             # Calculate confidence as maximum probability
             confidence_scores = np.max(probabilities, axis=1)
             
-            return predictions, confidence_scores
+            # Apply more conservative confidence calculation
+            # Reduce confidence if the probabilities are close to each other (high uncertainty)
+            prob_std = np.std(probabilities, axis=1)
+            uncertainty_penalty = prob_std * 2  # Higher std means more uncertainty
+            
+            # Also consider margin between top 2 predictions for each sample
+            sorted_probs = np.sort(probabilities, axis=1)[:, ::-1]  # Sort descending
+            margins = sorted_probs[:, 0] - sorted_probs[:, 1]  # Difference between 1st and 2nd
+            low_margin_penalty = np.maximum(0, 0.3 - margins) * 2  # Penalize small margins
+            
+            conservative_confidence = confidence_scores - uncertainty_penalty - low_margin_penalty
+            
+            # Ensure confidence doesn't go below 0
+            conservative_confidence = np.maximum(conservative_confidence, 0.0)
+            
+            return predictions, conservative_confidence
             
         except Exception as e:
             self.logger.error(f"Error making predictions: {e}")
@@ -264,6 +279,23 @@ class TradingModel:
             signal = self.label_map.get(winner_class_value, 'HOLD')
             confidence = float(probs_row[winner_index])
             
+            # Apply conservative confidence calculation
+            # Reduce confidence if probabilities are close (high uncertainty)
+            prob_std = float(np.std(probs_row))
+            
+            # Also consider margin between top 2 predictions
+            sorted_probs = sorted(probs_row, reverse=True)
+            margin = sorted_probs[0] - sorted_probs[1]  # Difference between 1st and 2nd
+            
+            # Conservative adjustments
+            uncertainty_penalty = prob_std * 2  # Penalize high variance
+            low_margin_penalty = max(0, 0.3 - margin) * 2  # Penalize small margins
+            
+            conservative_confidence = max(0.0, confidence - uncertainty_penalty - low_margin_penalty)
+            
+            # Use conservative confidence for threshold check
+            final_confidence = conservative_confidence
+            
             # اطمینان از وجود همه کلیدها
             for k in ['BUY', 'SELL', 'HOLD']:
                 if k not in proba_dict:
@@ -274,13 +306,17 @@ class TradingModel:
             
             return {
                 'signal': signal,
-                'confidence': confidence,
+                'confidence': final_confidence,  # Use conservative confidence
                 'probabilities': {
                     'BUY': proba_dict['BUY'],
                     'SELL': proba_dict['SELL'],
                     'HOLD': proba_dict['HOLD']
                 },
-                'meets_threshold': confidence >= self.confidence_threshold
+                'meets_threshold': final_confidence >= self.confidence_threshold,
+                'original_confidence': confidence,  # Keep original for debugging
+                'uncertainty_penalty': uncertainty_penalty,
+                'margin': margin,  # Margin between top predictions
+                'low_margin_penalty': low_margin_penalty
             }
             
         except Exception as e:
