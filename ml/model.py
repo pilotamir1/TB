@@ -189,7 +189,14 @@ class TradingModel:
             self.is_trained = True
             self.model_version = f"model_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             
+            # Store training metadata for validation
+            self.training_metadata = metrics.copy()
+            self.training_metadata['training_timestamp'] = datetime.now().isoformat()
+            
             self.logger.info(f"Model trained successfully. Accuracy: {train_accuracy:.4f}")
+            if X_val is not None and y_val is not None:
+                self.logger.info(f"Validation accuracy: {metrics['val_accuracy']:.4f}")
+                
             return metrics
             
         except Exception as e:
@@ -369,5 +376,73 @@ class TradingModel:
             'is_trained': self.is_trained,
             'feature_count': len(self.feature_names),
             'confidence_threshold': self.confidence_threshold,
-            'feature_names': self.feature_names.copy()
+            'feature_names': self.feature_names.copy(),
+            'training_metadata': getattr(self, 'training_metadata', {})
         }
+    
+    def validate_model_performance(self, recent_signals_data: List[Dict], recent_trades_data: List[Dict]) -> Dict[str, Any]:
+        """
+        Validate model performance against actual trading results
+        
+        Args:
+            recent_signals_data: Recent trading signals with outcomes
+            recent_trades_data: Recent completed trades
+            
+        Returns:
+            Dict with real performance metrics vs claimed accuracy
+        """
+        try:
+            if not recent_trades_data:
+                return {
+                    'real_accuracy': 0.0,
+                    'claimed_accuracy': getattr(self, 'training_metadata', {}).get('val_accuracy', 0.0),
+                    'performance_gap': 0.0,
+                    'total_trades': 0,
+                    'winning_trades': 0,
+                    'message': 'No trade data available for validation'
+                }
+            
+            # Calculate real trading performance
+            total_trades = len(recent_trades_data)
+            winning_trades = sum(1 for trade in recent_trades_data if trade.get('pnl', 0) > 0)
+            real_accuracy = winning_trades / total_trades if total_trades > 0 else 0.0
+            
+            # Get claimed accuracy from training
+            claimed_accuracy = getattr(self, 'training_metadata', {}).get('val_accuracy', 0.0)
+            
+            # Calculate performance gap
+            performance_gap = abs(claimed_accuracy - real_accuracy)
+            
+            # Determine if model needs retraining
+            needs_retraining = performance_gap > 0.3 or real_accuracy < 0.4  # 30% gap or <40% real accuracy
+            
+            # Generate insights
+            insights = []
+            if real_accuracy < 0.3:
+                insights.append("Model performing very poorly in live trading")
+            elif real_accuracy < claimed_accuracy - 0.2:
+                insights.append("Significant overfitting detected - model accuracy much lower in practice")
+            elif real_accuracy > claimed_accuracy + 0.1:
+                insights.append("Model performing better than expected")
+            
+            if performance_gap > 0.4:
+                insights.append("Large discrepancy between training and live performance")
+            
+            return {
+                'real_accuracy': real_accuracy,
+                'claimed_accuracy': claimed_accuracy,
+                'performance_gap': performance_gap,
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'win_rate': real_accuracy,
+                'needs_retraining': needs_retraining,
+                'insights': insights,
+                'model_health': 'good' if performance_gap < 0.15 and real_accuracy > 0.5 else 'poor'
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error validating model performance: {e}")
+            return {
+                'error': str(e),
+                'model_health': 'unknown'
+            }

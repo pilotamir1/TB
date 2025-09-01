@@ -45,7 +45,7 @@ TP_SL_CONFIG = {
     'tp1_percent': 3.0,  # First take profit at 3%
     'tp2_percent': 5.0,  # Second take profit at 5%
     'tp3_percent': 8.0,  # Third take profit at 8%
-    'initial_sl_percent': 2.0,  # Initial stop loss at 2%
+    'initial_sl_percent': 3.0,  # Initial stop loss at 3% (as requested)
     'trailing_enabled': True,
 }
 
