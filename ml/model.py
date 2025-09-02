@@ -226,22 +226,23 @@ class TradingModel:
             # Calculate confidence as maximum probability
             confidence_scores = np.max(probabilities, axis=1)
             
-            # Apply more conservative confidence calculation
+            # Apply balanced confidence calculation to maintain quality while allowing higher confidence
             # Reduce confidence if the probabilities are close to each other (high uncertainty)
             prob_std = np.std(probabilities, axis=1)
-            uncertainty_penalty = prob_std * 2  # Higher std means more uncertainty
+            uncertainty_penalty = prob_std * 0.8  # Reduced from 2.0 to 0.8 - less aggressive penalty
             
             # Also consider margin between top 2 predictions for each sample
             sorted_probs = np.sort(probabilities, axis=1)[:, ::-1]  # Sort descending
             margins = sorted_probs[:, 0] - sorted_probs[:, 1]  # Difference between 1st and 2nd
-            low_margin_penalty = np.maximum(0, 0.3 - margins) * 2  # Penalize small margins
+            low_margin_penalty = np.maximum(0, 0.15 - margins) * 1.5  # Reduced threshold from 0.3 to 0.15, multiplier from 2.0 to 1.5
             
-            conservative_confidence = confidence_scores - uncertainty_penalty - low_margin_penalty
+            # Calculate balanced confidence with reduced penalties
+            balanced_confidence = confidence_scores - uncertainty_penalty - low_margin_penalty
             
-            # Ensure confidence doesn't go below 0
-            conservative_confidence = np.maximum(conservative_confidence, 0.0)
+            # Ensure confidence doesn't go below 0.1 (10% minimum for valid signals)
+            balanced_confidence = np.maximum(balanced_confidence, 0.1)
             
-            return predictions, conservative_confidence
+            return predictions, balanced_confidence
             
         except Exception as e:
             self.logger.error(f"Error making predictions: {e}")
@@ -279,7 +280,7 @@ class TradingModel:
             signal = self.label_map.get(winner_class_value, 'HOLD')
             confidence = float(probs_row[winner_index])
             
-            # Apply conservative confidence calculation
+            # Apply balanced confidence calculation to maintain quality while allowing higher confidence
             # Reduce confidence if probabilities are close (high uncertainty)
             prob_std = float(np.std(probs_row))
             
@@ -287,14 +288,15 @@ class TradingModel:
             sorted_probs = sorted(probs_row, reverse=True)
             margin = sorted_probs[0] - sorted_probs[1]  # Difference between 1st and 2nd
             
-            # Conservative adjustments
-            uncertainty_penalty = prob_std * 2  # Penalize high variance
-            low_margin_penalty = max(0, 0.3 - margin) * 2  # Penalize small margins
+            # Balanced adjustments - less aggressive than before
+            uncertainty_penalty = prob_std * 0.8  # Reduced from 2.0 to 0.8
+            low_margin_penalty = max(0, 0.15 - margin) * 1.5  # Reduced threshold from 0.3 to 0.15, multiplier from 2.0 to 1.5
             
-            conservative_confidence = max(0.0, confidence - uncertainty_penalty - low_margin_penalty)
+            # Calculate balanced confidence with reduced penalties
+            balanced_confidence = max(0.1, confidence - uncertainty_penalty - low_margin_penalty)  # 10% minimum instead of 0%
             
-            # Use conservative confidence for threshold check
-            final_confidence = conservative_confidence
+            # Use balanced confidence for threshold check
+            final_confidence = balanced_confidence
             
             # اطمینان از وجود همه کلیدها
             for k in ['BUY', 'SELL', 'HOLD']:
@@ -302,11 +304,11 @@ class TradingModel:
                     proba_dict[k] = 0.0
             
             # دیباگ (بعداً خواستی پاک کن)
-            self.logger.debug(f"PRED_DEBUG classes={classes} probs={probs_row.tolist()} mapped={proba_dict} pick={signal} conf={confidence:.3f}")
+            self.logger.debug(f"PRED_DEBUG classes={classes} probs={probs_row.tolist()} mapped={proba_dict} pick={signal} orig_conf={confidence:.3f} balanced_conf={final_confidence:.3f}")
             
             return {
                 'signal': signal,
-                'confidence': final_confidence,  # Use conservative confidence
+                'confidence': final_confidence,  # Use balanced confidence
                 'probabilities': {
                     'BUY': proba_dict['BUY'],
                     'SELL': proba_dict['SELL'],
@@ -316,7 +318,8 @@ class TradingModel:
                 'original_confidence': confidence,  # Keep original for debugging
                 'uncertainty_penalty': uncertainty_penalty,
                 'margin': margin,  # Margin between top predictions
-                'low_margin_penalty': low_margin_penalty
+                'low_margin_penalty': low_margin_penalty,
+                'balanced_confidence': balanced_confidence  # Added for transparency
             }
             
         except Exception as e:
