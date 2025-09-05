@@ -49,6 +49,14 @@ class PositionManager:
             # Calculate TP/SL levels
             tp_sl_levels = self._calculate_tp_sl_levels(entry_price, side)
             
+            # Debug logging for TP/SL calculation
+            self.logger.info(f"TP/SL levels calculated for {symbol}: "
+                           f"Entry=${entry_price:.6f}, "
+                           f"SL=${tp_sl_levels['initial_sl']:.6f} (-3%), "
+                           f"TP1=${tp_sl_levels['tp1']:.6f} (+3%), "
+                           f"TP2=${tp_sl_levels['tp2']:.6f} (+6%), "
+                           f"TP3=${tp_sl_levels['tp3']:.6f} (+10%)")
+            
             # Create position in database
             session = db_connection.get_session()
             
@@ -200,6 +208,14 @@ class PositionManager:
                 session.close()
                 return
             
+            # Debug logging for position status
+            if datetime.now().second % 30 == 0:  # Log every 30 seconds to avoid spam
+                self.logger.info(f"Monitoring position {position_id} ({position.symbol}): "
+                                f"Entry=${position.entry_price:.6f}, "
+                                f"Current=${current_price:.6f}, "
+                                f"SL=${position.current_sl:.6f}, "
+                                f"TP1=${position.tp1_price:.6f}")
+            
             # Update current price
             position.current_price = current_price
             position.updated_at = datetime.now()
@@ -217,81 +233,99 @@ class PositionManager:
             self.logger.error(f"Error checking triggers for position {position_id}: {e}")
     
     def _check_long_position_triggers(self, position: Position, current_price: float):
-        """Check triggers for LONG positions"""
+        """Check triggers for LONG positions with user's specific TP/SL progression"""
         # Check Stop Loss
         if current_price <= position.current_sl:
             self.logger.info(f"SL triggered for position {position.id}: {current_price} <= {position.current_sl}")
             self.close_position(position.id, "Stop Loss triggered")
             return
         
-        # Check Take Profit levels and update trailing SL
+        # Check Take Profit levels and update trailing SL according to user specifications
         if not position.tp1_hit and current_price >= position.tp1_price:
-            # TP1 hit - move SL to entry (breakeven)
+            # TP1 hit (+3%) - move SL to entry price (breakeven) and set TP2 at +6%
             position.tp1_hit = True
-            position.current_sl = position.entry_price
-            self.logger.info(f"TP1 hit for position {position.id}, SL moved to entry: {position.entry_price}")
+            position.current_sl = position.entry_price  # Move SL to breakeven
+            position.tp2_price = position.entry_price * (1 + 6.0 / 100)  # TP2 at +6% from entry
+            self.logger.info(f"TP1 hit for position {position.id} at +3%. SL moved to entry: {position.entry_price}, TP2 set to +6%: {position.tp2_price}")
         
         elif position.tp1_hit and not position.tp2_hit and current_price >= position.tp2_price:
-            # TP2 hit - move SL to TP1
+            # TP2 hit (+6%) - move SL to TP1 price and set TP3 at +10%
             position.tp2_hit = True
-            position.current_sl = position.tp1_price
-            self.logger.info(f"TP2 hit for position {position.id}, SL moved to TP1: {position.tp1_price}")
+            position.current_sl = position.tp1_price  # Move SL to TP1 (+3%)
+            position.tp3_price = position.entry_price * (1 + 10.0 / 100)  # TP3 at +10% from entry
+            self.logger.info(f"TP2 hit for position {position.id} at +6%. SL moved to TP1: {position.tp1_price}, TP3 set to +10%: {position.tp3_price}")
         
         elif position.tp2_hit and not position.tp3_hit and current_price >= position.tp3_price:
-            # TP3 hit - move SL to TP2
+            # TP3 hit (+10%) - move SL to TP2 price and continue progression
             position.tp3_hit = True
-            position.current_sl = position.tp2_price
-            self.logger.info(f"TP3 hit for position {position.id}, SL moved to TP2: {position.tp2_price}")
+            position.current_sl = position.tp2_price  # Move SL to TP2 (+6%)
+            self.logger.info(f"TP3 hit for position {position.id} at +10%. SL moved to TP2: {position.tp2_price}")
     
     def _check_short_position_triggers(self, position: Position, current_price: float):
-        """Check triggers for SHORT positions"""
+        """Check triggers for SHORT positions with user's specific TP/SL progression"""
         # Check Stop Loss
         if current_price >= position.current_sl:
             self.logger.info(f"SL triggered for position {position.id}: {current_price} >= {position.current_sl}")
             self.close_position(position.id, "Stop Loss triggered")
             return
         
-        # Check Take Profit levels and update trailing SL
+        # Check Take Profit levels and update trailing SL according to user specifications
         if not position.tp1_hit and current_price <= position.tp1_price:
-            # TP1 hit - move SL to entry (breakeven)
+            # TP1 hit (-3%) - move SL to entry price (breakeven) and set TP2 at -6%
             position.tp1_hit = True
-            position.current_sl = position.entry_price
-            self.logger.info(f"TP1 hit for position {position.id}, SL moved to entry: {position.entry_price}")
+            position.current_sl = position.entry_price  # Move SL to breakeven
+            position.tp2_price = position.entry_price * (1 - 6.0 / 100)  # TP2 at -6% from entry
+            self.logger.info(f"TP1 hit for position {position.id} at -3%. SL moved to entry: {position.entry_price}, TP2 set to -6%: {position.tp2_price}")
         
         elif position.tp1_hit and not position.tp2_hit and current_price <= position.tp2_price:
-            # TP2 hit - move SL to TP1
+            # TP2 hit (-6%) - move SL to TP1 price and set TP3 at -10%
             position.tp2_hit = True
-            position.current_sl = position.tp1_price
-            self.logger.info(f"TP2 hit for position {position.id}, SL moved to TP1: {position.tp1_price}")
+            position.current_sl = position.tp1_price  # Move SL to TP1 (-3%)
+            position.tp3_price = position.entry_price * (1 - 10.0 / 100)  # TP3 at -10% from entry
+            self.logger.info(f"TP2 hit for position {position.id} at -6%. SL moved to TP1: {position.tp1_price}, TP3 set to -10%: {position.tp3_price}")
         
         elif position.tp2_hit and not position.tp3_hit and current_price <= position.tp3_price:
-            # TP3 hit - move SL to TP2
+            # TP3 hit (-10%) - move SL to TP2 price and continue progression
             position.tp3_hit = True
-            position.current_sl = position.tp2_price
-            self.logger.info(f"TP3 hit for position {position.id}, SL moved to TP2: {position.tp2_price}")
+            position.current_sl = position.tp2_price  # Move SL to TP2 (-6%)
+            self.logger.info(f"TP3 hit for position {position.id} at -10%. SL moved to TP2: {position.tp2_price}")
     
     def _calculate_tp_sl_levels(self, entry_price: float, side: str) -> Dict[str, float]:
         """Calculate TP/SL levels based on entry price and side"""
         if side == 'LONG':
             return {
-                'tp1': entry_price * (1 + self.tp1_percent / 100),
-                'tp2': entry_price * (1 + self.tp2_percent / 100),
-                'tp3': entry_price * (1 + self.tp3_percent / 100),
-                'initial_sl': entry_price * (1 - self.initial_sl_percent / 100)
+                'tp1': entry_price * (1 + self.tp1_percent / 100),  # +3% from entry
+                'tp2': entry_price * (1 + self.tp2_percent / 100),  # +6% from entry  
+                'tp3': entry_price * (1 + self.tp3_percent / 100),  # +10% from entry
+                'initial_sl': entry_price * (1 - self.initial_sl_percent / 100)  # -3% from entry
             }
         else:  # SHORT
             return {
-                'tp1': entry_price * (1 - self.tp1_percent / 100),
-                'tp2': entry_price * (1 - self.tp2_percent / 100),
-                'tp3': entry_price * (1 - self.tp3_percent / 100),
-                'initial_sl': entry_price * (1 + self.initial_sl_percent / 100)
+                'tp1': entry_price * (1 - self.tp1_percent / 100),  # -3% from entry
+                'tp2': entry_price * (1 - self.tp2_percent / 100),  # -6% from entry
+                'tp3': entry_price * (1 - self.tp3_percent / 100),  # -10% from entry
+                'initial_sl': entry_price * (1 + self.initial_sl_percent / 100)  # +3% from entry
             }
     
     def _get_current_price(self, symbol: str) -> Optional[float]:
         """Get current market price for symbol"""
         try:
             ticker = self.api.get_ticker(symbol)
-            return float(ticker.get('last', 0))
+            
+            # Handle both API response formats (direct and nested)
+            if 'ticker' in ticker and isinstance(ticker['ticker'], dict):
+                # Nested format from fallback data
+                price = float(ticker['ticker'].get('last', 0))
+            else:
+                # Direct format from live API
+                price = float(ticker.get('last', 0))
+            
+            if price == 0:
+                self.logger.warning(f"Got zero price for {symbol}, ticker data: {ticker}")
+                return None
+                
+            return price
+            
         except Exception as e:
             self.logger.error(f"Error getting current price for {symbol}: {e}")
             return None

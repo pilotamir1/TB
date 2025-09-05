@@ -34,18 +34,18 @@ DATABASE_CONFIG = {
 TRADING_CONFIG = {
     'timeframe': '1m',  # 4-hour timeframe as specified
     'demo_balance': 100.0,  # Starting demo balance in USD
-    'confidence_threshold': 0.7,  # 70% confidence minimum
+    'confidence_threshold': 0.6,  # 60% confidence minimum as requested by user
     'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],
     'max_positions': 4,  # Maximum concurrent positions
-    'risk_per_trade': 0.02,  # 2% risk per trade
+    'risk_per_trade': 0.5,  # 50% of portfolio per trade as requested by user
 }
 
 # Take Profit / Stop Loss Configuration
 TP_SL_CONFIG = {
-    'tp1_percent': 3.0,  # First take profit at 3%
-    'tp2_percent': 5.0,  # Second take profit at 5%
-    'tp3_percent': 8.0,  # Third take profit at 8%
-    'initial_sl_percent': 3.0,  # Initial stop loss at 3% (as requested)
+    'tp1_percent': 3.0,  # First take profit at +3% from entry
+    'tp2_percent': 6.0,  # Second take profit at +6% from entry (when TP1 hit)
+    'tp3_percent': 10.0,  # Third take profit at +10% from entry (when TP2 hit)
+    'initial_sl_percent': 3.0,  # Initial stop loss at -3% from entry price
     'trailing_enabled': True,
 }
 
