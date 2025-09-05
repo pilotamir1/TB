@@ -34,18 +34,18 @@ DATABASE_CONFIG = {
 TRADING_CONFIG = {
     'timeframe': '1m',  # 4-hour timeframe as specified
     'demo_balance': 100.0,  # Starting demo balance in USD
-    'confidence_threshold': 0.7,  # 70% confidence minimum
+    'confidence_threshold': 0.6,  # 60% confidence minimum as requested by user
     'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],
     'max_positions': 4,  # Maximum concurrent positions
-    'risk_per_trade': 0.02,  # 2% risk per trade
+    'risk_per_trade': 0.5,  # 50% of portfolio per trade as requested by user
 }
 
 # Take Profit / Stop Loss Configuration
 TP_SL_CONFIG = {
-    'tp1_percent': 3.0,  # First take profit at 3%
-    'tp2_percent': 5.0,  # Second take profit at 5%
-    'tp3_percent': 8.0,  # Third take profit at 8%
-    'initial_sl_percent': 2.0,  # Initial stop loss at 2%
+    'tp1_percent': 3.0,  # First take profit at +3% from entry
+    'tp2_percent': 6.0,  # Second take profit at +6% from entry (when TP1 hit)
+    'tp3_percent': 10.0,  # Third take profit at +10% from entry (when TP2 hit)
+    'initial_sl_percent': 3.0,  # Initial stop loss at -3% from entry price
     'trailing_enabled': True,
 }
 
@@ -78,8 +78,8 @@ WEB_CONFIG = {
 
 # Data Update Configuration
 DATA_CONFIG = {
-    'update_interval': 60,  # Update every 300 seconds for 4h timeframe
-    'batch_size': 100,
+    'update_interval': 60,  # Update every 60 seconds (1 minute) to collect data sequentially
+    'batch_size': 5,  # Reduced to 5 to avoid API pressure
     'max_retries': 3,
     'timeout': 30,
     'min_1m_candles': 1440,  # Minimum aligned 4h candles required for training

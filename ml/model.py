@@ -189,7 +189,14 @@ class TradingModel:
             self.is_trained = True
             self.model_version = f"model_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             
+            # Store training metadata for validation
+            self.training_metadata = metrics.copy()
+            self.training_metadata['training_timestamp'] = datetime.now().isoformat()
+            
             self.logger.info(f"Model trained successfully. Accuracy: {train_accuracy:.4f}")
+            if X_val is not None and y_val is not None:
+                self.logger.info(f"Validation accuracy: {metrics['val_accuracy']:.4f}")
+                
             return metrics
             
         except Exception as e:
@@ -219,7 +226,23 @@ class TradingModel:
             # Calculate confidence as maximum probability
             confidence_scores = np.max(probabilities, axis=1)
             
-            return predictions, confidence_scores
+            # Apply balanced confidence calculation to maintain quality while allowing higher confidence
+            # Reduce confidence if the probabilities are close to each other (high uncertainty)
+            prob_std = np.std(probabilities, axis=1)
+            uncertainty_penalty = prob_std * 0.8  # Reduced from 2.0 to 0.8 - less aggressive penalty
+            
+            # Also consider margin between top 2 predictions for each sample
+            sorted_probs = np.sort(probabilities, axis=1)[:, ::-1]  # Sort descending
+            margins = sorted_probs[:, 0] - sorted_probs[:, 1]  # Difference between 1st and 2nd
+            low_margin_penalty = np.maximum(0, 0.15 - margins) * 1.5  # Reduced threshold from 0.3 to 0.15, multiplier from 2.0 to 1.5
+            
+            # Calculate balanced confidence with reduced penalties
+            balanced_confidence = confidence_scores - uncertainty_penalty - low_margin_penalty
+            
+            # Ensure confidence doesn't go below 0.1 (10% minimum for valid signals)
+            balanced_confidence = np.maximum(balanced_confidence, 0.1)
+            
+            return predictions, balanced_confidence
             
         except Exception as e:
             self.logger.error(f"Error making predictions: {e}")
@@ -257,23 +280,46 @@ class TradingModel:
             signal = self.label_map.get(winner_class_value, 'HOLD')
             confidence = float(probs_row[winner_index])
             
+            # Apply balanced confidence calculation to maintain quality while allowing higher confidence
+            # Reduce confidence if probabilities are close (high uncertainty)
+            prob_std = float(np.std(probs_row))
+            
+            # Also consider margin between top 2 predictions
+            sorted_probs = sorted(probs_row, reverse=True)
+            margin = sorted_probs[0] - sorted_probs[1]  # Difference between 1st and 2nd
+            
+            # Balanced adjustments - less aggressive than before
+            uncertainty_penalty = prob_std * 0.8  # Reduced from 2.0 to 0.8
+            low_margin_penalty = max(0, 0.15 - margin) * 1.5  # Reduced threshold from 0.3 to 0.15, multiplier from 2.0 to 1.5
+            
+            # Calculate balanced confidence with reduced penalties
+            balanced_confidence = max(0.1, confidence - uncertainty_penalty - low_margin_penalty)  # 10% minimum instead of 0%
+            
+            # Use balanced confidence for threshold check
+            final_confidence = balanced_confidence
+            
             # اطمینان از وجود همه کلیدها
             for k in ['BUY', 'SELL', 'HOLD']:
                 if k not in proba_dict:
                     proba_dict[k] = 0.0
             
             # دیباگ (بعداً خواستی پاک کن)
-            self.logger.debug(f"PRED_DEBUG classes={classes} probs={probs_row.tolist()} mapped={proba_dict} pick={signal} conf={confidence:.3f}")
+            self.logger.debug(f"PRED_DEBUG classes={classes} probs={probs_row.tolist()} mapped={proba_dict} pick={signal} orig_conf={confidence:.3f} balanced_conf={final_confidence:.3f}")
             
             return {
                 'signal': signal,
-                'confidence': confidence,
+                'confidence': final_confidence,  # Use balanced confidence
                 'probabilities': {
                     'BUY': proba_dict['BUY'],
                     'SELL': proba_dict['SELL'],
                     'HOLD': proba_dict['HOLD']
                 },
-                'meets_threshold': confidence >= self.confidence_threshold
+                'meets_threshold': final_confidence >= self.confidence_threshold,
+                'original_confidence': confidence,  # Keep original for debugging
+                'uncertainty_penalty': uncertainty_penalty,
+                'margin': margin,  # Margin between top predictions
+                'low_margin_penalty': low_margin_penalty,
+                'balanced_confidence': balanced_confidence  # Added for transparency
             }
             
         except Exception as e:
@@ -369,5 +415,73 @@ class TradingModel:
             'is_trained': self.is_trained,
             'feature_count': len(self.feature_names),
             'confidence_threshold': self.confidence_threshold,
-            'feature_names': self.feature_names.copy()
+            'feature_names': self.feature_names.copy(),
+            'training_metadata': getattr(self, 'training_metadata', {})
         }
+    
+    def validate_model_performance(self, recent_signals_data: List[Dict], recent_trades_data: List[Dict]) -> Dict[str, Any]:
+        """
+        Validate model performance against actual trading results
+        
+        Args:
+            recent_signals_data: Recent trading signals with outcomes
+            recent_trades_data: Recent completed trades
+            
+        Returns:
+            Dict with real performance metrics vs claimed accuracy
+        """
+        try:
+            if not recent_trades_data:
+                return {
+                    'real_accuracy': 0.0,
+                    'claimed_accuracy': getattr(self, 'training_metadata', {}).get('val_accuracy', 0.0),
+                    'performance_gap': 0.0,
+                    'total_trades': 0,
+                    'winning_trades': 0,
+                    'message': 'No trade data available for validation'
+                }
+            
+            # Calculate real trading performance
+            total_trades = len(recent_trades_data)
+            winning_trades = sum(1 for trade in recent_trades_data if trade.get('pnl', 0) > 0)
+            real_accuracy = winning_trades / total_trades if total_trades > 0 else 0.0
+            
+            # Get claimed accuracy from training
+            claimed_accuracy = getattr(self, 'training_metadata', {}).get('val_accuracy', 0.0)
+            
+            # Calculate performance gap
+            performance_gap = abs(claimed_accuracy - real_accuracy)
+            
+            # Determine if model needs retraining
+            needs_retraining = performance_gap > 0.3 or real_accuracy < 0.4  # 30% gap or <40% real accuracy
+            
+            # Generate insights
+            insights = []
+            if real_accuracy < 0.3:
+                insights.append("Model performing very poorly in live trading")
+            elif real_accuracy < claimed_accuracy - 0.2:
+                insights.append("Significant overfitting detected - model accuracy much lower in practice")
+            elif real_accuracy > claimed_accuracy + 0.1:
+                insights.append("Model performing better than expected")
+            
+            if performance_gap > 0.4:
+                insights.append("Large discrepancy between training and live performance")
+            
+            return {
+                'real_accuracy': real_accuracy,
+                'claimed_accuracy': claimed_accuracy,
+                'performance_gap': performance_gap,
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'win_rate': real_accuracy,
+                'needs_retraining': needs_retraining,
+                'insights': insights,
+                'model_health': 'good' if performance_gap < 0.15 and real_accuracy > 0.5 else 'poor'
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error validating model performance: {e}")
+            return {
+                'error': str(e),
+                'model_health': 'unknown'
+            }

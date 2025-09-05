@@ -94,8 +94,8 @@ class EnhancedDataFetcher:
     def _update_symbol_data(self, symbol: str):
         """Update data for a specific symbol with health tracking"""
         try:
-            # Get latest market data
-            market_data = self.api_client.get_market_data(symbol, self.timeframe, limit=100)
+            # Get latest market data (reduced to 5 to avoid API pressure)
+            market_data = self.api_client.get_market_data(symbol, self.timeframe, limit=5)
             
             if not market_data:
                 raise ValueError(f"No market data received for {symbol}")
