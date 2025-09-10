@@ -88,8 +88,7 @@ class PositionManager:
                 tp1_price=tp_sl_levels['tp1'],
                 tp2_price=tp_sl_levels['tp2'],
                 tp3_price=tp_sl_levels['tp3'],
-                status='OPEN',
-                confidence=signal_confidence
+                status='OPEN'
             )
             
             session.add(position)
