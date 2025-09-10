@@ -293,7 +293,7 @@ class TradingEngine:
             return None
     
     def _process_buy_signal(self, symbol: str, confidence: float, current_price: float):
-        """Process BUY signal"""
+        """Process BUY signal with enhanced logging and validation"""
         try:
             # Check if we already have a position for this symbol
             existing_position = self._get_open_position(symbol)
@@ -301,27 +301,42 @@ class TradingEngine:
                 self.logger.info(f"Already have open position for {symbol}, skipping BUY signal")
                 return
             
+            self.logger.info(f"🎯 Processing BUY signal for {symbol}: Confidence={confidence:.1%}, Price=${current_price:.6f}")
+            
             # Calculate position size
             position_size = self._calculate_position_size(symbol, current_price)
             
             if position_size <= 0:
-                self.logger.warning(f"Insufficient balance for {symbol} position")
+                self.logger.warning(f"❌ Insufficient balance or invalid position size for {symbol}: {position_size}")
                 return
+            
+            # Validate the trade before execution
+            position_value = position_size * current_price
+            risk_per_trade_percent = TRADING_CONFIG['risk_per_trade'] * 100
+            self.logger.info(f"🔍 Trade validation for {symbol}:")
+            self.logger.info(f"   Signal Confidence: {confidence:.1%} (threshold: {self.confidence_threshold:.1%})")
+            self.logger.info(f"   Position Value: ${position_value:.2f} ({risk_per_trade_percent}% of portfolio)")
+            self.logger.info(f"   Risk per trade: 3% of position = ${position_value * 0.03:.2f}")
             
             if self.demo_mode:
                 # Demo trading
+                self.logger.info(f"🧪 Executing DEMO BUY order for {symbol}")
                 position_id = self.position_manager.open_position(
                     symbol, 'LONG', position_size, current_price, confidence
                 )
                 
                 if position_id:
                     # Update used balance
-                    position_value = position_size * current_price
                     self.used_balance += position_value
-                    self.logger.info(f"Demo BUY order placed for {symbol}: {position_size} @ {current_price}")
+                    self.logger.info(f"✅ Demo BUY order executed for {symbol}: "
+                                   f"{position_size:.6f} @ ${current_price:.6f}")
+                    self.logger.info(f"💼 Updated used balance: ${self.used_balance:.2f} / ${self.demo_balance:.2f}")
+                else:
+                    self.logger.error(f"❌ Failed to open demo position for {symbol}")
             else:
                 # Live trading
                 try:
+                    self.logger.info(f"🔴 Executing LIVE BUY order for {symbol}")
                     # Place market buy order
                     order_result = self.api.place_order(
                         symbol, 'buy', position_size, order_type='market'
@@ -331,13 +346,16 @@ class TradingEngine:
                         position_id = self.position_manager.open_position(
                             symbol, 'LONG', position_size, current_price, confidence
                         )
-                        self.logger.info(f"Live BUY order placed for {symbol}: {position_size} @ {current_price}")
+                        self.logger.info(f"✅ Live BUY order executed for {symbol}: "
+                                       f"{position_size:.6f} @ ${current_price:.6f}")
+                    else:
+                        self.logger.error(f"❌ Live order placement failed for {symbol}")
                 
                 except Exception as e:
-                    self.logger.error(f"Failed to place live BUY order for {symbol}: {e}")
+                    self.logger.error(f"❌ Failed to place live BUY order for {symbol}: {e}")
             
         except Exception as e:
-            self.logger.error(f"Error processing BUY signal for {symbol}: {e}")
+            self.logger.error(f"❌ Error processing BUY signal for {symbol}: {e}")
     
     def _process_sell_signal(self, symbol: str, confidence: float, current_price: float):
         """Process SELL signal"""
@@ -366,8 +384,18 @@ class TradingEngine:
             allocation_amount = available_balance * TRADING_CONFIG['risk_per_trade']  # Now set to 0.5 (50%)
             position_size = allocation_amount / price
             
-            self.logger.info(f"Position sizing for {symbol}: Available=${available_balance:.2f}, "
-                           f"Allocation(50%)=${allocation_amount:.2f}, Price=${price:.6f}, Size={position_size:.6f}")
+            # Enhanced logging for position sizing
+            portfolio_percentage = TRADING_CONFIG['risk_per_trade'] * 100
+            self.logger.info(f"💰 Position sizing for {symbol}:")
+            self.logger.info(f"   Available Balance: ${available_balance:.2f}")
+            self.logger.info(f"   Portfolio Allocation: {portfolio_percentage}% = ${allocation_amount:.2f}")
+            self.logger.info(f"   Entry Price: ${price:.6f}")
+            self.logger.info(f"   Position Size: {position_size:.6f} {symbol.replace('USDT', '')}")
+            self.logger.info(f"   Position Value: ${allocation_amount:.2f}")
+            
+            if position_size <= 0:
+                self.logger.warning(f"Calculated position size is zero or negative: {position_size}")
+                return 0.0
             
             return position_size
             

@@ -31,7 +31,7 @@ class PositionManager:
     def open_position(self, symbol: str, side: str, quantity: float, 
                      entry_price: float, signal_confidence: float) -> Optional[int]:
         """
-        Open a new trading position
+        Open a new trading position with enhanced validation and logging
         
         Args:
             symbol: Trading symbol
@@ -44,18 +44,35 @@ class PositionManager:
             Position ID if successful, None otherwise
         """
         try:
-            self.logger.info(f"Opening {side} position for {symbol}: {quantity} @ {entry_price}")
+            # Validate inputs
+            if quantity <= 0:
+                self.logger.error(f"Invalid quantity for {symbol}: {quantity}")
+                return None
+            if entry_price <= 0:
+                self.logger.error(f"Invalid entry price for {symbol}: {entry_price}")
+                return None
+            
+            self.logger.info(f"💰 Opening {side} position for {symbol}: "
+                           f"Quantity={quantity:.6f}, "
+                           f"Entry=${entry_price:.6f}, "
+                           f"Confidence={signal_confidence:.1%}")
             
             # Calculate TP/SL levels
             tp_sl_levels = self._calculate_tp_sl_levels(entry_price, side)
             
-            # Debug logging for TP/SL calculation
-            self.logger.info(f"TP/SL levels calculated for {symbol}: "
+            # Enhanced logging for TP/SL calculation
+            position_value = quantity * entry_price
+            risk_amount = abs(entry_price - tp_sl_levels['initial_sl']) * quantity
+            risk_percentage = (risk_amount / position_value) * 100
+            
+            self.logger.info(f"📊 TP/SL levels for {symbol} {side} position: "
                            f"Entry=${entry_price:.6f}, "
                            f"SL=${tp_sl_levels['initial_sl']:.6f} (-3%), "
                            f"TP1=${tp_sl_levels['tp1']:.6f} (+3%), "
                            f"TP2=${tp_sl_levels['tp2']:.6f} (+6%), "
                            f"TP3=${tp_sl_levels['tp3']:.6f} (+10%)")
+            
+            self.logger.info(f"💼 Position risk: ${risk_amount:.2f} ({risk_percentage:.1f}% of position value)")
             
             # Create position in database
             session = db_connection.get_session()
@@ -71,7 +88,8 @@ class PositionManager:
                 tp1_price=tp_sl_levels['tp1'],
                 tp2_price=tp_sl_levels['tp2'],
                 tp3_price=tp_sl_levels['tp3'],
-                status='OPEN'
+                status='OPEN',
+                confidence=signal_confidence
             )
             
             session.add(position)
@@ -86,18 +104,20 @@ class PositionManager:
                 'entry_price': entry_price,
                 'quantity': quantity,
                 'tp_sl_levels': tp_sl_levels,
-                'confidence': signal_confidence
+                'confidence': signal_confidence,
+                'opened_at': datetime.now()
             }
             
             # Start monitoring if not already running
             if not self.monitoring_thread or not self.monitoring_thread.is_alive():
                 self.start_position_monitoring()
             
-            self.logger.info(f"Position opened successfully: ID {position_id}")
+            self.logger.info(f"✅ Position opened successfully: ID {position_id}")
+            self.logger.info(f"🔍 Started 1-second monitoring for position {position_id}")
             return position_id
             
         except Exception as e:
-            self.logger.error(f"Error opening position: {e}")
+            self.logger.error(f"❌ Error opening position for {symbol}: {e}")
             return None
     
     def close_position(self, position_id: int, reason: str = "Manual close") -> bool:
@@ -189,7 +209,8 @@ class PositionManager:
                 time.sleep(5)
     
     def _check_position_triggers(self, position_id: int):
-        """Check TP/SL triggers for a specific position"""
+        """Check TP/SL triggers for a specific position with enhanced error handling"""
+        session = None
         try:
             # Get position from database
             session = db_connection.get_session()
@@ -199,22 +220,36 @@ class PositionManager:
                 # Remove from active monitoring
                 if position_id in self.active_positions:
                     del self.active_positions[position_id]
-                session.close()
+                    self.logger.info(f"Removed closed position {position_id} from monitoring")
+                if session:
+                    session.close()
                 return
             
-            # Get current price
+            # Get current price with retry logic
             current_price = self._get_current_price(position.symbol)
             if current_price is None:
-                session.close()
+                self.logger.warning(f"Failed to get price for {position.symbol}, skipping this check")
+                if session:
+                    session.close()
                 return
             
-            # Debug logging for position status
-            if datetime.now().second % 30 == 0:  # Log every 30 seconds to avoid spam
-                self.logger.info(f"Monitoring position {position_id} ({position.symbol}): "
+            # Calculate position age to prevent immediate closures
+            position_age = (datetime.now() - position.opened_at).total_seconds()
+            if position_age < 10:  # Don't trigger SL/TP in first 10 seconds
+                self.logger.debug(f"Position {position_id} too young ({position_age:.1f}s), skipping trigger check")
+                if session:
+                    session.close()
+                return
+            
+            # Enhanced logging every 30 seconds
+            if datetime.now().second % 30 == 0:
+                unrealized_pnl = ((current_price - position.entry_price) / position.entry_price) * 100
+                self.logger.info(f"📊 Position {position_id} ({position.symbol}): "
                                 f"Entry=${position.entry_price:.6f}, "
-                                f"Current=${current_price:.6f}, "
+                                f"Current=${current_price:.6f} ({unrealized_pnl:+.2f}%), "
                                 f"SL=${position.current_sl:.6f}, "
-                                f"TP1=${position.tp1_price:.6f}")
+                                f"TP1=${position.tp1_price:.6f}, "
+                                f"Age={position_age:.0f}s")
             
             # Update current price
             position.current_price = current_price
@@ -227,17 +262,32 @@ class PositionManager:
                 self._check_short_position_triggers(position, current_price)
             
             session.commit()
-            session.close()
             
         except Exception as e:
             self.logger.error(f"Error checking triggers for position {position_id}: {e}")
+        finally:
+            if session:
+                session.close()
     
     def _check_long_position_triggers(self, position: Position, current_price: float):
         """Check triggers for LONG positions with user's specific TP/SL progression"""
-        # Check Stop Loss
+        # Validate prices before checking triggers
+        if current_price <= 0 or position.current_sl <= 0:
+            self.logger.warning(f"Invalid prices for position {position.id}: current={current_price}, sl={position.current_sl}")
+            return
+        
+        # Calculate percentage changes for logging
+        sl_distance = ((current_price - position.current_sl) / position.current_sl) * 100
+        
+        # Check Stop Loss with additional validation
         if current_price <= position.current_sl:
-            self.logger.info(f"SL triggered for position {position.id}: {current_price} <= {position.current_sl}")
-            self.close_position(position.id, "Stop Loss triggered")
+            # Double-check this isn't a false trigger due to bad data
+            if current_price < position.entry_price * 0.5:  # More than 50% drop seems like bad data
+                self.logger.warning(f"Suspicious SL trigger for position {position.id}: price dropped to {current_price} (from entry {position.entry_price})")
+                return
+            
+            self.logger.info(f"🔻 SL triggered for position {position.id}: {current_price:.6f} <= {position.current_sl:.6f} (SL distance: {sl_distance:.2f}%)")
+            self.close_position(position.id, f"Stop Loss triggered at {current_price:.6f}")
             return
         
         # Check Take Profit levels and update trailing SL according to user specifications
@@ -246,27 +296,45 @@ class PositionManager:
             position.tp1_hit = True
             position.current_sl = position.entry_price  # Move SL to breakeven
             position.tp2_price = position.entry_price * (1 + 6.0 / 100)  # TP2 at +6% from entry
-            self.logger.info(f"TP1 hit for position {position.id} at +3%. SL moved to entry: {position.entry_price}, TP2 set to +6%: {position.tp2_price}")
+            self.logger.info(f"🎯 TP1 hit for position {position.id} at +3% ({current_price:.6f}). "
+                           f"SL moved to breakeven: {position.entry_price:.6f}, "
+                           f"TP2 set to +6%: {position.tp2_price:.6f}")
         
         elif position.tp1_hit and not position.tp2_hit and current_price >= position.tp2_price:
             # TP2 hit (+6%) - move SL to TP1 price and set TP3 at +10%
             position.tp2_hit = True
             position.current_sl = position.tp1_price  # Move SL to TP1 (+3%)
             position.tp3_price = position.entry_price * (1 + 10.0 / 100)  # TP3 at +10% from entry
-            self.logger.info(f"TP2 hit for position {position.id} at +6%. SL moved to TP1: {position.tp1_price}, TP3 set to +10%: {position.tp3_price}")
+            self.logger.info(f"🎯 TP2 hit for position {position.id} at +6% ({current_price:.6f}). "
+                           f"SL moved to TP1: {position.tp1_price:.6f}, "
+                           f"TP3 set to +10%: {position.tp3_price:.6f}")
         
         elif position.tp2_hit and not position.tp3_hit and current_price >= position.tp3_price:
             # TP3 hit (+10%) - move SL to TP2 price and continue progression
             position.tp3_hit = True
             position.current_sl = position.tp2_price  # Move SL to TP2 (+6%)
-            self.logger.info(f"TP3 hit for position {position.id} at +10%. SL moved to TP2: {position.tp2_price}")
+            self.logger.info(f"🎯 TP3 hit for position {position.id} at +10% ({current_price:.6f}). "
+                           f"SL moved to TP2: {position.tp2_price:.6f}")
     
     def _check_short_position_triggers(self, position: Position, current_price: float):
         """Check triggers for SHORT positions with user's specific TP/SL progression"""
-        # Check Stop Loss
+        # Validate prices before checking triggers
+        if current_price <= 0 or position.current_sl <= 0:
+            self.logger.warning(f"Invalid prices for position {position.id}: current={current_price}, sl={position.current_sl}")
+            return
+        
+        # Calculate percentage changes for logging
+        sl_distance = ((position.current_sl - current_price) / current_price) * 100
+        
+        # Check Stop Loss with additional validation
         if current_price >= position.current_sl:
-            self.logger.info(f"SL triggered for position {position.id}: {current_price} >= {position.current_sl}")
-            self.close_position(position.id, "Stop Loss triggered")
+            # Double-check this isn't a false trigger due to bad data
+            if current_price > position.entry_price * 1.5:  # More than 50% rise seems like bad data
+                self.logger.warning(f"Suspicious SL trigger for position {position.id}: price rose to {current_price} (from entry {position.entry_price})")
+                return
+            
+            self.logger.info(f"🔻 SL triggered for position {position.id}: {current_price:.6f} >= {position.current_sl:.6f} (SL distance: {sl_distance:.2f}%)")
+            self.close_position(position.id, f"Stop Loss triggered at {current_price:.6f}")
             return
         
         # Check Take Profit levels and update trailing SL according to user specifications
@@ -275,20 +343,25 @@ class PositionManager:
             position.tp1_hit = True
             position.current_sl = position.entry_price  # Move SL to breakeven
             position.tp2_price = position.entry_price * (1 - 6.0 / 100)  # TP2 at -6% from entry
-            self.logger.info(f"TP1 hit for position {position.id} at -3%. SL moved to entry: {position.entry_price}, TP2 set to -6%: {position.tp2_price}")
+            self.logger.info(f"🎯 TP1 hit for position {position.id} at -3% ({current_price:.6f}). "
+                           f"SL moved to breakeven: {position.entry_price:.6f}, "
+                           f"TP2 set to -6%: {position.tp2_price:.6f}")
         
         elif position.tp1_hit and not position.tp2_hit and current_price <= position.tp2_price:
             # TP2 hit (-6%) - move SL to TP1 price and set TP3 at -10%
             position.tp2_hit = True
             position.current_sl = position.tp1_price  # Move SL to TP1 (-3%)
             position.tp3_price = position.entry_price * (1 - 10.0 / 100)  # TP3 at -10% from entry
-            self.logger.info(f"TP2 hit for position {position.id} at -6%. SL moved to TP1: {position.tp1_price}, TP3 set to -10%: {position.tp3_price}")
+            self.logger.info(f"🎯 TP2 hit for position {position.id} at -6% ({current_price:.6f}). "
+                           f"SL moved to TP1: {position.tp1_price:.6f}, "
+                           f"TP3 set to -10%: {position.tp3_price:.6f}")
         
         elif position.tp2_hit and not position.tp3_hit and current_price <= position.tp3_price:
             # TP3 hit (-10%) - move SL to TP2 price and continue progression
             position.tp3_hit = True
             position.current_sl = position.tp2_price  # Move SL to TP2 (-6%)
-            self.logger.info(f"TP3 hit for position {position.id} at -10%. SL moved to TP2: {position.tp2_price}")
+            self.logger.info(f"🎯 TP3 hit for position {position.id} at -10% ({current_price:.6f}). "
+                           f"SL moved to TP2: {position.tp2_price:.6f}")
     
     def _calculate_tp_sl_levels(self, entry_price: float, side: str) -> Dict[str, float]:
         """Calculate TP/SL levels based on entry price and side"""
@@ -308,24 +381,41 @@ class PositionManager:
             }
     
     def _get_current_price(self, symbol: str) -> Optional[float]:
-        """Get current market price for symbol"""
+        """Get current market price for symbol with robust fallback handling"""
         try:
             ticker = self.api.get_ticker(symbol)
+            price = 0.0
             
             # Handle both API response formats (direct and nested)
             if 'ticker' in ticker and isinstance(ticker['ticker'], dict):
                 # Nested format from fallback data
-                price = float(ticker['ticker'].get('last', 0))
-            else:
+                price_str = ticker['ticker'].get('last', '0')
+                price = float(price_str) if price_str else 0.0
+                self.logger.debug(f"Got nested ticker price for {symbol}: {price}")
+            elif isinstance(ticker, dict) and 'last' in ticker:
                 # Direct format from live API
-                price = float(ticker.get('last', 0))
+                price_str = ticker.get('last', '0')
+                price = float(price_str) if price_str else 0.0
+                self.logger.debug(f"Got direct ticker price for {symbol}: {price}")
+            else:
+                # Try to extract price from any available field
+                for field in ['last', 'price', 'close']:
+                    if field in ticker:
+                        price_str = ticker[field]
+                        price = float(price_str) if price_str else 0.0
+                        if price > 0:
+                            self.logger.debug(f"Got price from field '{field}' for {symbol}: {price}")
+                            break
             
-            if price == 0:
-                self.logger.warning(f"Got zero price for {symbol}, ticker data: {ticker}")
+            if price <= 0:
+                self.logger.warning(f"Got invalid price ({price}) for {symbol}, ticker data: {ticker}")
                 return None
                 
             return price
             
+        except (ValueError, TypeError) as e:
+            self.logger.error(f"Error parsing price for {symbol}: {e}, ticker: {ticker}")
+            return None
         except Exception as e:
             self.logger.error(f"Error getting current price for {symbol}: {e}")
             return None
