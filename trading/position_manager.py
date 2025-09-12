@@ -243,11 +243,33 @@ class PositionManager:
             # Enhanced logging every 30 seconds
             if datetime.now().second % 30 == 0:
                 unrealized_pnl = ((current_price - position.entry_price) / position.entry_price) * 100
+                
+                # Build TP status string
+                tp_status = []
+                if position.tp1_hit:
+                    tp_status.append("TP1✅")
+                else:
+                    tp_status.append(f"TP1=${position.tp1_price:.6f}")
+                
+                if position.tp2_price:
+                    if position.tp2_hit:
+                        tp_status.append("TP2✅")
+                    else:
+                        tp_status.append(f"TP2=${position.tp2_price:.6f}")
+                
+                if position.tp3_price:
+                    if position.tp3_hit:
+                        tp_status.append("TP3✅")  
+                    else:
+                        tp_status.append(f"TP3=${position.tp3_price:.6f}")
+                
+                tp_info = ", ".join(tp_status)
+                
                 self.logger.info(f"📊 Position {position_id} ({position.symbol}): "
                                 f"Entry=${position.entry_price:.6f}, "
                                 f"Current=${current_price:.6f} ({unrealized_pnl:+.2f}%), "
                                 f"SL=${position.current_sl:.6f}, "
-                                f"TP1=${position.tp1_price:.6f}, "
+                                f"{tp_info}, "
                                 f"Age={position_age:.0f}s")
             
             # Update current price
@@ -290,6 +312,7 @@ class PositionManager:
             return
         
         # Check Take Profit levels and update trailing SL according to user specifications
+        # Use separate if statements to allow multiple TP levels to be processed in one cycle
         if not position.tp1_hit and current_price >= position.tp1_price:
             # TP1 hit (+3%) - move SL to entry price (breakeven) and set TP2 at +6%
             position.tp1_hit = True
@@ -299,7 +322,7 @@ class PositionManager:
                            f"SL moved to breakeven: {position.entry_price:.6f}, "
                            f"TP2 set to +6%: {position.tp2_price:.6f}")
         
-        elif position.tp1_hit and not position.tp2_hit and current_price >= position.tp2_price:
+        if position.tp1_hit and not position.tp2_hit and current_price >= position.tp2_price:
             # TP2 hit (+6%) - move SL to TP1 price and set TP3 at +10%
             position.tp2_hit = True
             position.current_sl = position.tp1_price  # Move SL to TP1 (+3%)
@@ -308,7 +331,7 @@ class PositionManager:
                            f"SL moved to TP1: {position.tp1_price:.6f}, "
                            f"TP3 set to +10%: {position.tp3_price:.6f}")
         
-        elif position.tp2_hit and not position.tp3_hit and current_price >= position.tp3_price:
+        if position.tp2_hit and not position.tp3_hit and current_price >= position.tp3_price:
             # TP3 hit (+10%) - move SL to TP2 price and continue progression
             position.tp3_hit = True
             position.current_sl = position.tp2_price  # Move SL to TP2 (+6%)
@@ -337,6 +360,7 @@ class PositionManager:
             return
         
         # Check Take Profit levels and update trailing SL according to user specifications
+        # Use separate if statements to allow multiple TP levels to be processed in one cycle
         if not position.tp1_hit and current_price <= position.tp1_price:
             # TP1 hit (-3%) - move SL to entry price (breakeven) and set TP2 at -6%
             position.tp1_hit = True
@@ -346,7 +370,7 @@ class PositionManager:
                            f"SL moved to breakeven: {position.entry_price:.6f}, "
                            f"TP2 set to -6%: {position.tp2_price:.6f}")
         
-        elif position.tp1_hit and not position.tp2_hit and current_price <= position.tp2_price:
+        if position.tp1_hit and not position.tp2_hit and current_price <= position.tp2_price:
             # TP2 hit (-6%) - move SL to TP1 price and set TP3 at -10%
             position.tp2_hit = True
             position.current_sl = position.tp1_price  # Move SL to TP1 (-3%)
@@ -355,7 +379,7 @@ class PositionManager:
                            f"SL moved to TP1: {position.tp1_price:.6f}, "
                            f"TP3 set to -10%: {position.tp3_price:.6f}")
         
-        elif position.tp2_hit and not position.tp3_hit and current_price <= position.tp3_price:
+        if position.tp2_hit and not position.tp3_hit and current_price <= position.tp3_price:
             # TP3 hit (-10%) - move SL to TP2 price and continue progression
             position.tp3_hit = True
             position.current_sl = position.tp2_price  # Move SL to TP2 (-6%)
