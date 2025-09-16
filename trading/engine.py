@@ -38,7 +38,8 @@ class TradingEngine:
         self.used_balance = 0.0
         
         # Configuration
-        self.symbols = TRADING_CONFIG['symbols']
+        self.training_symbols = TRADING_CONFIG.get('training_symbols', TRADING_CONFIG['symbols'])
+        self.trading_symbols = self.data_fetcher.get_trading_symbols()
         self.confidence_threshold = TRADING_CONFIG['confidence_threshold']
         self.timeframe = TRADING_CONFIG['timeframe']
         
@@ -86,7 +87,8 @@ class TradingEngine:
                 self.logger.info(f"📊 Model: {self.model.model_type if hasattr(self.model, 'model_type') else 'Fallback'}")
                 self.logger.info(f"🎯 Confidence Threshold: {self.confidence_threshold * 100:.1f}%")
                 self.logger.info(f"💰 Demo Balance: ${self.demo_balance:.2f}")
-                self.logger.info(f"📈 Monitoring Symbols: {', '.join(self.symbols)}")
+                self.logger.info(f"📈 Training Symbols: {', '.join(self.training_symbols)}")
+                self.logger.info(f"💼 Trading Symbols: {len(self.trading_symbols)} symbols ({', '.join(self.trading_symbols[:5])}{'...' if len(self.trading_symbols) > 5 else ''})")
             else:
                 self.logger.warning("Trading system started in limited demo mode (no AI model)")
             
@@ -134,17 +136,18 @@ class TradingEngine:
         """Train or retrain the AI model"""
         try:
             self.logger.info(f"{'Retraining' if retrain else 'Training'} AI model...")
+            self.logger.info(f"Training on symbols: {self.training_symbols}")
             
             # For 4h timeframe, ensure we have sufficient aligned candles before training
             if self.timeframe == '4h':
                 self.logger.info("Checking and backfilling 4h candles before training...")
-                for symbol in self.symbols:
+                for symbol in self.training_symbols:
                     success = self.data_fetcher.backfill_4h(symbol)
                     if not success:
                         self.logger.warning(f"Could not ensure sufficient 4h candles for {symbol}")
             
-            # Train model with RFE
-            training_result = self.trainer.train_with_rfe(retrain=retrain)
+            # Train model with RFE using only training symbols
+            training_result = self.trainer.train_with_rfe(retrain=retrain, training_symbols=self.training_symbols)
             
             # Load trained model
             self.model = self.trainer.model
@@ -193,8 +196,8 @@ class TradingEngine:
         """Main trading loop"""
         while not self._stop_trading:
             try:
-                # Process each symbol
-                for symbol in self.symbols:
+                # Process each trading symbol
+                for symbol in self.trading_symbols:
                     try:
                         self._process_symbol(symbol)
                     except Exception as e:
@@ -555,7 +558,9 @@ class TradingEngine:
             'used_balance': self.used_balance,
             'available_balance': self.demo_balance - self.used_balance,
             'active_positions': len(self.position_manager.get_active_positions()),
-            'symbols': self.symbols,
+            'training_symbols': self.training_symbols,
+            'trading_symbols': self.trading_symbols,
+            'trading_symbols_count': len(self.trading_symbols),
             'timeframe': self.timeframe,
             'confidence_threshold': self.confidence_threshold
         }

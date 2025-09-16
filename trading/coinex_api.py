@@ -126,6 +126,73 @@ class CoinExAPI:
                 }
             }
     
+    def get_all_markets(self) -> List[Dict[str, Any]]:
+        """Get all available trading markets from CoinEx"""
+        try:
+            endpoint = "market/info"
+            result = self._make_request('GET', endpoint, auth_required=False)
+            
+            # Extract markets from the response
+            if isinstance(result, dict):
+                markets = []
+                for market_name, market_data in result.items():
+                    if isinstance(market_data, dict):
+                        markets.append({
+                            'symbol': market_name,
+                            'base_currency': market_data.get('trading_name', ''),
+                            'quote_currency': market_data.get('pricing_name', ''),
+                            'min_amount': float(market_data.get('min_amount', 0)),
+                            'maker_fee_rate': float(market_data.get('maker_fee_rate', 0)),
+                            'taker_fee_rate': float(market_data.get('taker_fee_rate', 0)),
+                            'pricing_decimal': int(market_data.get('pricing_decimal', 8)),
+                            'trading_decimal': int(market_data.get('trading_decimal', 8))
+                        })
+                
+                # Sort by preference: USDT pairs first
+                usdt_markets = [m for m in markets if m['symbol'].endswith('USDT')]
+                other_markets = [m for m in markets if not m['symbol'].endswith('USDT')]
+                
+                # Sort USDT markets by symbol name
+                usdt_markets.sort(key=lambda x: x['symbol'])
+                
+                # Return top 100 with USDT pairs prioritized
+                top_100 = (usdt_markets + other_markets)[:100]
+                
+                self.logger.info(f"Retrieved {len(top_100)} markets from CoinEx")
+                return top_100
+                
+            return []
+            
+        except Exception as e:
+            self.logger.error(f"Error getting all markets: {e}")
+            # Return fallback list of popular trading pairs
+            fallback_markets = [
+                'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'ADAUSDT', 'XRPUSDT',
+                'DOTUSDT', 'LINKUSDT', 'LTCUSDT', 'BCHUSDT', 'UNIUSDT', 'AAVEUSDT',
+                'SUSHIUSDT', 'COMPUSDT', 'MKRUSDT', 'YFIUSDT', 'SNXUSDT', 'CRVUSDT',
+                'BALUSDT', 'RENUSDT', 'KNCUSDT', 'LRCUSDT', 'BANDUSDT', 'STORJUSDT',
+                'BALUSDT', '1INCHUSDT', 'ALPHAUSDT', 'AUDIOUSDT', 'AXSUSDT', 'CHZUSDT',
+                'ENJUSDT', 'GALAUSDT', 'ICPUSDT', 'IMXUSDT', 'JASMYUSDT', 'MATICUSDT',
+                'NEARUSDT', 'OCEANUSDT', 'ROSEUSDT', 'SANDUSDT', 'THETAUSDT', 'TLMUSDT',
+                'TRXUSDT', 'VETUSDT', 'WAVESUSDT', 'ZILUSDT', 'ALGOUSDT', 'ATOMUSDT',
+                'AVAXUSDT', 'BATUSDT', 'CAKEUSDT', 'DASHUSDT', 'EGLDUSDT', 'EOSUSDT',
+                'ETCUSDT', 'FILUSDT', 'FLOWUSDT', 'FTMUSDT', 'HBARUSDT', 'IOTAUSDT',
+                'KLAYUSDT', 'KSMUSDT', 'LUNAUSDT', 'MANAUSDT', 'NEOUSDT', 'OMGUSDT',
+                'ONTUSDT', 'QTUMUSDT', 'RAYUSDT', 'RUNEUSDT', 'SCUSDT', 'SFPUSDT',
+                'SKLUSDT', 'SRMUSDT', 'STXUSDT', 'SXPUSDT', 'TOMOUSDT', 'TRBUSDT',
+                'UMAUSDT', 'XLMUSDT', 'XMRUSDT', 'XTZUSDT', 'ZECUSDT', 'ZENUSDT',
+                'COTIUSDT', 'CTSIUSDT', 'DYDXUSDT', 'ENSUSDT', 'FETCHUSDT', 'GMTUSDT',
+                'GRTUSDT', 'HNTUSDT', 'INJUSDT', 'JOEUSDT', 'LDOUSDT', 'LEVERUSDT',
+                'LPTUSDT', 'MASKUSDT', 'MOVRUSDT', 'OPUSDT', 'PERPUSDT', 'RNDRUSDT',
+                'SPELLUSDT', 'SSVUSDT', 'STGUSDT', 'WOOUSDT', 'API3USDT', 'APEUSDT',
+                'APTUSDT', 'ARBUSDT', 'BLURUSDT', 'BONKUSDT', 'CFXUSDT', 'COREUSDT',
+                'EDUUSDT', 'FLOKIUSDT', 'GASUSDT', 'IDUSDT', 'LDOUSDT', 'MAGICUSDT',
+                'PEPEUSDT', 'RADUSDT', 'RDNTUSDT', 'SUIUSDT', 'SEIUSDT', 'TIAUSDT'
+            ]
+            
+            return [{'symbol': symbol, 'base_currency': symbol[:-4], 'quote_currency': 'USDT'} 
+                   for symbol in fallback_markets[:100]]
+    
     def get_balance(self) -> Dict[str, Any]:
         """Get account balance"""
         try:

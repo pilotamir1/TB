@@ -465,18 +465,20 @@ class ModelTrainer:
         
         return X
     
-    def train_with_rfe(self, retrain: bool = False) -> Dict[str, Any]:
+    def train_with_rfe(self, retrain: bool = False, training_symbols: List[str] = None) -> Dict[str, Any]:
         """
         Complete training pipeline with RFE feature selection
         
         Args:
             retrain: Whether to retrain from scratch
+            training_symbols: Specific symbols to use for training (if None, uses config symbols)
             
         Returns:
             Training results and metrics
         """
         try:
-            self.logger.info("Starting complete model training with RFE")
+            training_symbols_info = training_symbols or "config symbols"
+            self.logger.info(f"Starting complete model training with RFE on: {training_symbols_info}")
             
             training_start = datetime.now()
             
@@ -499,7 +501,7 @@ class ModelTrainer:
             })
             
             # Prepare training data
-            X_full, y_full, selection_X, selection_y = self.prepare_training_data()
+            X_full, y_full, selection_X, selection_y = self.prepare_training_data(symbols=training_symbols)
             
             # Update training record with data info
             session = db_connection.get_session()

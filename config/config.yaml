@@ -3,9 +3,14 @@
 trading:
   timeframe: "1m"
   demo_balance: 100.0
-  confidence_threshold: 0.7  # Base threshold, will be adaptive
-  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"]
-  max_positions: 4
+  confidence_threshold: 0.6  # 60% confidence threshold as requested
+  # Training symbols - used for ML model training only
+  training_symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"]
+  # Trading symbols - will be populated dynamically from CoinEx top 100
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"]  # Default fallback
+  use_top_100_for_trading: true  # Enable top 100 CoinEx markets for trading
+  max_positions: 20  # Increased to handle more symbols
+  position_size_percent: 50.0  # Use 50% of portfolio per trade as requested
   risk_per_trade: 0.02
 
 # Adaptive threshold configuration

@@ -23,9 +23,15 @@ class DataFetcher:
         self.calculator = IndicatorCalculator()
         
         # Configuration
+        self.training_symbols = TRADING_CONFIG.get('training_symbols', TRADING_CONFIG['symbols'])
         self.symbols = TRADING_CONFIG['symbols']
+        self.use_top_100 = TRADING_CONFIG.get('use_top_100_for_trading', False)
         self.timeframe = TRADING_CONFIG['timeframe']
         self.update_interval = DATA_CONFIG['update_interval']
+        
+        # Load trading symbols dynamically if enabled
+        if self.use_top_100:
+            self._load_top_100_symbols()
         
         # Threading
         self.update_thread = None
@@ -40,6 +46,35 @@ class DataFetcher:
         self.min_fetch_interval = get_config_value('data.min_fetch_interval_seconds', 30)  # configurable throttling
         
         self.logger.info("Data fetcher initialized")
+        self.logger.info(f"Training symbols: {self.training_symbols}")
+        self.logger.info(f"Trading symbols: {len(self.symbols)} symbols")
+    
+    def get_training_symbols(self) -> List[str]:
+        """Get symbols used for ML model training"""
+        return self.training_symbols
+    
+    def get_trading_symbols(self) -> List[str]:
+        """Get symbols used for trading analysis"""
+        return self.symbols
+    
+    def _load_top_100_symbols(self):
+        """Load top 100 trading pairs from CoinEx for trading analysis"""
+        try:
+            markets = self.api.get_all_markets()
+            if markets:
+                # Extract just the symbol names
+                top_100_symbols = [market['symbol'] for market in markets[:100]]
+                self.symbols = top_100_symbols
+                self.logger.info(f"Loaded {len(top_100_symbols)} trading symbols from CoinEx top 100")
+                
+                # Log some examples
+                self.logger.info(f"Example trading symbols: {top_100_symbols[:10]}")
+            else:
+                self.logger.warning("Could not load top 100 symbols, using default symbols")
+                
+        except Exception as e:
+            self.logger.error(f"Error loading top 100 symbols: {e}")
+            self.logger.info("Using default symbols for trading")
     
     def start_real_time_updates(self):
         """Start real-time data updates"""
