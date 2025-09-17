@@ -35,9 +35,13 @@ TRADING_CONFIG = {
     'timeframe': '1m',  # 4-hour timeframe as specified
     'demo_balance': 100.0,  # Starting demo balance in USD
     'confidence_threshold': 0.6,  # 60% confidence minimum as requested by user
-    'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],
+    'training_symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],  # Symbols for model training (kept as requested)
+    'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],  # Keep backward compatibility
+    'analysis_symbols': [],  # Will be populated with top 100 symbols from CoinEx
+    'top_symbols_limit': 100,  # Number of top symbols to fetch for analysis/trading
     'max_positions': 4,  # Maximum concurrent positions
     'risk_per_trade': 0.5,  # 50% of portfolio per trade as requested by user
+    'use_top_symbols_for_analysis': True,  # Enable top 100 symbols for analysis/trading
 }
 
 # Take Profit / Stop Loss Configuration

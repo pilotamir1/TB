@@ -23,9 +23,13 @@ class DataFetcher:
         self.calculator = IndicatorCalculator()
         
         # Configuration
-        self.symbols = TRADING_CONFIG['symbols']
+        self.training_symbols = TRADING_CONFIG['training_symbols']  # For model training only
+        self.symbols = TRADING_CONFIG['symbols']  # Backward compatibility
+        self.analysis_symbols = []  # Will be populated with top symbols
         self.timeframe = TRADING_CONFIG['timeframe']
         self.update_interval = DATA_CONFIG['update_interval']
+        self.use_top_symbols = TRADING_CONFIG.get('use_top_symbols_for_analysis', True)
+        self.top_symbols_limit = TRADING_CONFIG.get('top_symbols_limit', 100)
         
         # Threading
         self.update_thread = None
@@ -39,7 +43,43 @@ class DataFetcher:
         self.last_fetch_times = {}  # symbol -> timestamp
         self.min_fetch_interval = get_config_value('data.min_fetch_interval_seconds', 30)  # configurable throttling
         
-        self.logger.info("Data fetcher initialized")
+        # Initialize analysis symbols
+        self._update_analysis_symbols()
+        
+        self.logger.info(f"Data fetcher initialized with {len(self.training_symbols)} training symbols and {len(self.analysis_symbols)} analysis symbols")
+    
+    def _update_analysis_symbols(self):
+        """Update the list of analysis symbols from CoinEx top pairs"""
+        try:
+            if self.use_top_symbols:
+                self.logger.info("Fetching top trading pairs from CoinEx...")
+                top_symbols = self.api.get_top_trading_pairs(limit=self.top_symbols_limit)
+                if top_symbols:
+                    self.analysis_symbols = top_symbols
+                    self.logger.info(f"Updated analysis symbols with {len(self.analysis_symbols)} top trading pairs")
+                    
+                    # Update the global config for other components
+                    TRADING_CONFIG['analysis_symbols'] = self.analysis_symbols
+                else:
+                    # Fallback to training symbols
+                    self.analysis_symbols = self.training_symbols.copy()
+                    self.logger.warning("Failed to get top symbols, falling back to training symbols")
+            else:
+                # Use training symbols for analysis if top symbols disabled
+                self.analysis_symbols = self.training_symbols.copy()
+                self.logger.info("Top symbols disabled, using training symbols for analysis")
+                
+        except Exception as e:
+            self.logger.error(f"Error updating analysis symbols: {e}")
+            self.analysis_symbols = self.training_symbols.copy()
+    
+    def get_active_symbols(self) -> List[str]:
+        """Get symbols that should be actively monitored for trading/analysis"""
+        return self.analysis_symbols if self.use_top_symbols else self.training_symbols
+    
+    def get_training_symbols(self) -> List[str]:
+        """Get symbols that should be used for model training"""
+        return self.training_symbols
     
     def start_real_time_updates(self):
         """Start real-time data updates"""
@@ -81,10 +121,23 @@ class DataFetcher:
 
     def _update_loop(self):
         """Main update loop for real-time data with throttling"""
+        symbols_refresh_interval = 3600  # Refresh top symbols every hour
+        last_symbols_refresh = 0
+        
         while not self.stop_updates:
             try:
-                # Update latest prices for all symbols
-                for symbol in self.symbols:
+                # Periodically refresh analysis symbols
+                current_time = time.time()
+                if current_time - last_symbols_refresh > symbols_refresh_interval:
+                    self.logger.info("Refreshing analysis symbols...")
+                    self._update_analysis_symbols()
+                    last_symbols_refresh = current_time
+                
+                # Get active symbols for monitoring
+                active_symbols = self.get_active_symbols()
+                
+                # Update latest prices for all active symbols
+                for symbol in active_symbols:
                     try:
                         # Check throttling before updating
                         if not self._should_fetch_data(symbol):
@@ -532,7 +585,7 @@ class DataFetcher:
         try:
             overview = {}
             
-            for symbol in self.symbols:
+            for symbol in self.get_active_symbols():
                 price_info = self.get_latest_price(symbol)
                 if price_info:
                     # Get 24h change
@@ -560,7 +613,7 @@ class DataFetcher:
     def force_data_refresh(self, symbol: str = None):
         """Force refresh of data for symbol or all symbols"""
         try:
-            symbols_to_refresh = [symbol] if symbol else self.symbols
+            symbols_to_refresh = [symbol] if symbol else self.get_active_symbols()
             
             for sym in symbols_to_refresh:
                 # Clear cache

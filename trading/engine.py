@@ -38,7 +38,8 @@ class TradingEngine:
         self.used_balance = 0.0
         
         # Configuration
-        self.symbols = TRADING_CONFIG['symbols']
+        self.training_symbols = TRADING_CONFIG['training_symbols']
+        self.symbols = TRADING_CONFIG['symbols']  # Keep for backward compatibility
         self.confidence_threshold = TRADING_CONFIG['confidence_threshold']
         self.timeframe = TRADING_CONFIG['timeframe']
         
@@ -138,7 +139,8 @@ class TradingEngine:
             # For 4h timeframe, ensure we have sufficient aligned candles before training
             if self.timeframe == '4h':
                 self.logger.info("Checking and backfilling 4h candles before training...")
-                for symbol in self.symbols:
+                # Use training symbols for backfill (not analysis symbols)
+                for symbol in self.training_symbols:
                     success = self.data_fetcher.backfill_4h(symbol)
                     if not success:
                         self.logger.warning(f"Could not ensure sufficient 4h candles for {symbol}")
@@ -193,8 +195,11 @@ class TradingEngine:
         """Main trading loop"""
         while not self._stop_trading:
             try:
-                # Process each symbol
-                for symbol in self.symbols:
+                # Get active symbols for trading/analysis
+                active_symbols = self.data_fetcher.get_active_symbols()
+                
+                # Process each active symbol
+                for symbol in active_symbols:
                     try:
                         self._process_symbol(symbol)
                     except Exception as e:
