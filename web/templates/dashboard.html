@@ -157,7 +157,7 @@
                 </div>
 
                 <!-- Recent Signals -->
-                <div class="card">
+                <div class="card mb-4">
                     <div class="card-header">
                         <h5><i class="fas fa-signal me-2"></i>Recent Trading Signals</h5>
                     </div>
@@ -166,6 +166,24 @@
                             <div class="text-center text-muted">
                                 <i class="fas fa-satellite-dish fa-3x mb-3"></i>
                                 <p>No signals generated yet</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trade History -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-history me-2"></i>Trade History</h5>
+                        <button class="btn btn-outline-primary btn-sm" onclick="refreshTradeHistory()">
+                            <i class="fas fa-refresh"></i>
+                        </button>
+                    </div>
+                    <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                        <div id="trades-container">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-chart-bar fa-3x mb-3"></i>
+                                <p>No completed trades yet</p>
                             </div>
                         </div>
                     </div>
@@ -268,6 +286,7 @@
             updateMarketOverview();
             updateModelInfo();
             updateLogs();
+            updateTradeHistory();
         }
         
         // Start real-time updates
@@ -279,48 +298,59 @@
                 updateMarketOverview();
             }, 5000); // Update every 5 seconds
             
-            // Update logs less frequently
+            // Update logs and trade history less frequently
             setInterval(updateLogs, 30000); // Update every 30 seconds
+            setInterval(updateTradeHistory, 60000); // Update every 60 seconds
         }
         
         // Update system status
         async function updateSystemStatus() {
             try {
-                const response = await fetch('/api/system/status');
-                const data = await response.json();
+                // Get system status
+                const systemResponse = await fetch('/api/system/status');
+                const systemData = await systemResponse.json();
                 
-                if (data.success) {
-                    const status = data.system_status;
-                    const training = data.training_progress;
+                // Get portfolio data
+                const portfolioResponse = await fetch('/api/portfolio');
+                const portfolioData = await portfolioResponse.json();
+                
+                if (systemData.success) {
+                    const status = systemData.system_status;
                     
                     // Update status indicator
                     const statusIndicator = document.querySelector('#system-status .status-indicator');
                     const statusText = document.getElementById('status-text');
                     
-                    if (status.is_running) {
+                    if (status.services?.trading_engine?.is_running) {
                         statusIndicator.className = 'status-indicator status-running';
                         statusText.textContent = 'Running';
                         isTrading = true;
-                        updateTradingButton();
                     } else {
                         statusIndicator.className = 'status-indicator status-stopped';
                         statusText.textContent = 'Stopped';
                         isTrading = false;
-                        updateTradingButton();
                     }
+                    updateTradingButton();
+                }
+                
+                if (portfolioData.success) {
+                    const portfolio = portfolioData.portfolio;
                     
                     // Update main metrics
-                    document.getElementById('portfolio-value').textContent = 
-                        '$' + (status.demo_balance + (status.unrealized_pnl || 0)).toFixed(2);
-                    document.getElementById('active-positions').textContent = status.active_positions || 0;
+                    document.getElementById('portfolio-value').textContent = '$' + portfolio.portfolio_value.toFixed(2);
+                    document.getElementById('daily-pnl').textContent = '$' + portfolio.daily_pnl.toFixed(2);
+                    document.getElementById('daily-pnl-pct').textContent = portfolio.daily_pnl_pct.toFixed(2) + '%';
+                    document.getElementById('active-positions').textContent = portfolio.total_positions;
                     
-                    // Update training progress
-                    if (training && training.stage !== 'completed' && training.stage !== 'failed') {
-                        showTrainingProgress(training);
+                    // Update daily P&L color
+                    const dailyPnlElement = document.getElementById('daily-pnl');
+                    if (portfolio.daily_pnl >= 0) {
+                        dailyPnlElement.className = 'text-success';
                     } else {
-                        hideTrainingProgress();
+                        dailyPnlElement.className = 'text-danger';
                     }
                 }
+                
             } catch (error) {
                 console.error('Error updating system status:', error);
             }
@@ -422,7 +452,7 @@
         // Update signals
         async function updateSignals() {
             try {
-                const response = await fetch('/api/signals');
+                const response = await fetch('/api/signals/recent?limit=10');
                 const data = await response.json();
                 
                 if (data.success) {
@@ -513,20 +543,57 @@
                 const response = await fetch('/api/model/status');
                 const data = await response.json();
                 
+                // Also fetch validation data
+                const validationResponse = await fetch('/api/model/validation');
+                const validationData = await validationResponse.json();
+                
                 if (data.success) {
                     const container = document.getElementById('model-info');
                     
                     // Update accuracy display
                     const accuracyElement = document.getElementById('model-accuracy');
                     if (accuracyElement) {
-                        accuracyElement.textContent = data.val_accuracy ? 
-                            (data.val_accuracy * 100).toFixed(1) + '%' : 'N/A';
+                        if (validationData.success && validationData.validation.real_accuracy !== undefined) {
+                            // Show real accuracy instead of claimed accuracy
+                            const realAccuracy = (validationData.validation.real_accuracy * 100).toFixed(1);
+                            accuracyElement.textContent = realAccuracy + '%';
+                            
+                            // Color code based on performance
+                            if (validationData.validation.real_accuracy < 0.3) {
+                                accuracyElement.className = 'text-danger';
+                            } else if (validationData.validation.real_accuracy < 0.5) {
+                                accuracyElement.className = 'text-warning';
+                            } else {
+                                accuracyElement.className = 'text-success';
+                            }
+                        } else {
+                            accuracyElement.textContent = data.val_accuracy ? 
+                                (data.val_accuracy * 100).toFixed(1) + '%' : 'N/A';
+                        }
                     }
                     
                     // Update version display
                     const versionElement = document.getElementById('model-version');
                     if (versionElement) {
                         versionElement.textContent = data.model_version || 'No model';
+                    }
+                    
+                    // Build validation info
+                    let validationHtml = '';
+                    if (validationData.success && validationData.validation.real_accuracy !== undefined) {
+                        const val = validationData.validation;
+                        const healthBadgeClass = val.model_health === 'good' ? 'bg-success' : 'bg-danger';
+                        
+                        validationHtml = `
+                            <div class="mb-2">
+                                <small class="text-muted">Model Health:</small><br>
+                                <span class="badge ${healthBadgeClass}">${val.model_health?.toUpperCase() || 'UNKNOWN'}</span>
+                            </div>
+                            <div class="mb-2">
+                                <small class="text-muted">Real vs Claimed:</small><br>
+                                <small>${(val.real_accuracy * 100).toFixed(1)}% vs ${(val.claimed_accuracy * 100).toFixed(1)}%</small>
+                            </div>
+                        `;
                     }
                     
                     // Update complete model info panel
@@ -545,10 +612,7 @@
                                     <small class="text-muted">Training Status:</small><br>
                                     <span class="badge bg-${data.is_trained ? 'success' : 'warning'}">${data.is_trained ? 'TRAINED' : 'NOT TRAINED'}</span>
                                 </div>
-                                <div class="mb-2">
-                                    <small class="text-muted">Validation Accuracy:</small><br>
-                                    <strong>${data.val_accuracy ? (data.val_accuracy * 100).toFixed(1) + '%' : 'N/A'}</strong>
-                                </div>
+                                ${validationHtml}
                             </div>
                             <div class="col-md-6">
                                 <div class="mb-2">
@@ -866,6 +930,129 @@
                 console.error('Error updating settings:', error);
                 alert('Error updating settings');
             }
+        }
+        
+        // Trade History Functions
+        async function updateTradeHistory() {
+            try {
+                const response = await fetch('/api/trades/history?limit=20');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const container = document.getElementById('trades-container');
+                    
+                    if (data.trades.length === 0) {
+                        container.innerHTML = `
+                            <div class="text-center text-muted">
+                                <i class="fas fa-chart-bar fa-3x mb-3"></i>
+                                <p>No completed trades yet</p>
+                            </div>
+                        `;
+                    } else {
+                        let tradesHtml = '';
+                        let totalProfit = 0;
+                        let winningTrades = 0;
+                        
+                        data.trades.forEach(trade => {
+                            const pnlClass = trade.pnl >= 0 ? 'text-success' : 'text-danger';
+                            const pnlIcon = trade.pnl >= 0 ? 'fa-arrow-up' : 'fa-arrow-down';
+                            const sideClass = trade.side === 'LONG' ? 'bg-success' : 'bg-danger';
+                            
+                            if (trade.pnl > 0) winningTrades++;
+                            totalProfit += trade.pnl;
+                            
+                            const openTime = trade.opened_at ? new Date(trade.opened_at).toLocaleString() : 'N/A';
+                            const closeTime = trade.closed_at ? new Date(trade.closed_at).toLocaleString() : 'N/A';
+                            
+                            tradesHtml += `
+                                <div class="card mb-2">
+                                    <div class="card-body p-3">
+                                        <div class="row align-items-center">
+                                            <div class="col-md-3">
+                                                <strong>${trade.symbol}</strong>
+                                                <span class="badge ${sideClass} ms-2">${trade.side}</span>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <small class="text-muted">Entry/Exit</small><br>
+                                                <span>$${trade.entry_price.toFixed(4)}</span><br>
+                                                <span>$${trade.exit_price.toFixed(4)}</span>
+                                            </div>
+                                            <div class="col-md-2">
+                                                <small class="text-muted">P&L</small><br>
+                                                <span class="${pnlClass}">
+                                                    <i class="fas ${pnlIcon}"></i>
+                                                    $${trade.pnl.toFixed(2)}
+                                                </span><br>
+                                                <small class="${pnlClass}">${trade.pnl_percentage.toFixed(2)}%</small>
+                                            </div>
+                                            <div class="col-md-2">
+                                                <small class="text-muted">Qty</small><br>
+                                                <span>${trade.quantity.toFixed(4)}</span>
+                                            </div>
+                                            <div class="col-md-2">
+                                                <small class="text-muted">Duration</small><br>
+                                                <span>${trade.duration || 'N/A'}</span>
+                                            </div>
+                                        </div>
+                                        <div class="row mt-2">
+                                            <div class="col-12">
+                                                <small class="text-muted">
+                                                    Opened: ${openTime}<br>
+                                                    Closed: ${closeTime}
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        
+                        // Add summary at top
+                        const winRate = data.trades.length > 0 ? (winningTrades / data.trades.length * 100).toFixed(1) : 0;
+                        const summaryClass = totalProfit >= 0 ? 'text-success' : 'text-danger';
+                        
+                        const summaryHtml = `
+                            <div class="card mb-3 border-info">
+                                <div class="card-body p-3">
+                                    <div class="row text-center">
+                                        <div class="col-3">
+                                            <strong>${data.trades.length}</strong><br>
+                                            <small class="text-muted">Total Trades</small>
+                                        </div>
+                                        <div class="col-3">
+                                            <strong class="${summaryClass}">$${totalProfit.toFixed(2)}</strong><br>
+                                            <small class="text-muted">Total P&L</small>
+                                        </div>
+                                        <div class="col-3">
+                                            <strong class="text-info">${winRate}%</strong><br>
+                                            <small class="text-muted">Win Rate</small>
+                                        </div>
+                                        <div class="col-3">
+                                            <strong class="text-primary">${winningTrades}</strong><br>
+                                            <small class="text-muted">Winning</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        container.innerHTML = summaryHtml + tradesHtml;
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating trade history:', error);
+                const container = document.getElementById('trades-container');
+                container.innerHTML = `
+                    <div class="text-center text-danger">
+                        <i class="fas fa-exclamation-triangle"></i><br>
+                        Error loading trade history
+                    </div>
+                `;
+            }
+        }
+        
+        async function refreshTradeHistory() {
+            await updateTradeHistory();
         }
     </script>
 </body>

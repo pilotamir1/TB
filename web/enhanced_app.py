@@ -242,7 +242,7 @@ def create_enhanced_app(trading_engine=None, signal_manager=None, prediction_sch
                         'id': signal.id,
                         'timestamp': signal.timestamp.isoformat(),
                         'symbol': signal.symbol,
-                        'direction': signal.signal_type,
+                        'signal_type': signal.signal_type,  # Use signal_type for consistency
                         'confidence': signal.confidence,
                         'price': signal.price,
                         'model_version': signal.model_version,
@@ -371,11 +371,66 @@ def create_enhanced_app(trading_engine=None, signal_manager=None, prediction_sch
     def get_positions():
         """Get active positions"""
         try:
-            if app.trading_engine:
-                positions = app.trading_engine.get_positions()
+            if app.trading_engine and hasattr(app.trading_engine, 'position_manager'):
+                positions = app.trading_engine.position_manager.get_active_positions()
                 return jsonify({
                     'success': True,
                     'positions': positions
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Trading engine or position manager not available'
+                })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/portfolio')
+    def get_portfolio():
+        """Get portfolio information including balance and daily P&L"""
+        try:
+            portfolio_data = {
+                'portfolio_value': 0.0,
+                'available_balance': 100.0,  # Default demo balance
+                'daily_pnl': 0.0,
+                'daily_pnl_pct': 0.0,
+                'total_positions': 0
+            }
+            
+            if app.trading_engine:
+                # Get current balance
+                if hasattr(app.trading_engine, 'demo_balance'):
+                    portfolio_data['available_balance'] = app.trading_engine.demo_balance
+                
+                # Get active positions and calculate total P&L
+                if hasattr(app.trading_engine, 'position_manager'):
+                    summary = app.trading_engine.position_manager.get_position_summary()
+                    portfolio_data['total_positions'] = summary.get('total_active_positions', 0)
+                    portfolio_data['daily_pnl'] = summary.get('total_unrealized_pnl', 0.0)
+                    
+                    # Calculate portfolio value
+                    portfolio_data['portfolio_value'] = portfolio_data['available_balance'] + portfolio_data['daily_pnl']
+                    
+                    # Calculate daily P&L percentage
+                    if portfolio_data['available_balance'] > 0:
+                        portfolio_data['daily_pnl_pct'] = (portfolio_data['daily_pnl'] / portfolio_data['available_balance']) * 100
+            
+            return jsonify({
+                'success': True,
+                'portfolio': portfolio_data
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/trading/start', methods=['POST'])
+    def start_trading():
+        """Start trading"""
+        try:
+            if app.trading_engine and hasattr(app.trading_engine, 'start_trading'):
+                result = app.trading_engine.start_trading()
+                return jsonify({
+                    'success': result,
+                    'message': 'Trading started' if result else 'Failed to start trading'
                 })
             else:
                 return jsonify({
@@ -385,20 +440,86 @@ def create_enhanced_app(trading_engine=None, signal_manager=None, prediction_sch
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/market/overview')
-    def market_overview():
-        """Get market overview"""
+    @app.route('/api/trading/stop', methods=['POST'])
+    def stop_trading():
+        """Stop trading"""
         try:
-            if app.trading_engine and hasattr(app.trading_engine, 'data_fetcher'):
-                overview = app.trading_engine.data_fetcher.get_market_overview()
+            if app.trading_engine and hasattr(app.trading_engine, 'stop_trading'):
+                result = app.trading_engine.stop_trading()
                 return jsonify({
-                    'success': True,
-                    'market_data': overview
+                    'success': result,
+                    'message': 'Trading stopped' if result else 'Failed to stop trading'
                 })
             else:
                 return jsonify({
                     'success': False,
-                    'error': 'Market data not available'
+                    'error': 'Trading engine not available'
+                })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/trades/history')
+    def get_trade_history():
+        """Get completed trade history"""
+        try:
+            limit = request.args.get('limit', 50, type=int)
+            
+            session = db_connection.get_session()
+            
+            # Query completed positions
+            completed_positions = session.query(Position).filter(
+                Position.status == 'CLOSED'
+            ).order_by(Position.closed_at.desc()).limit(limit).all()
+            
+            trades = []
+            for position in completed_positions:
+                trades.append({
+                    'id': position.id,
+                    'symbol': position.symbol,
+                    'side': position.side,
+                    'entry_price': position.entry_price,
+                    'exit_price': position.current_price,
+                    'quantity': position.quantity,
+                    'pnl': position.pnl,
+                    'pnl_percentage': position.pnl_percentage,
+                    'opened_at': position.opened_at.isoformat() if position.opened_at else None,
+                    'closed_at': position.closed_at.isoformat() if position.closed_at else None,
+                    'duration': str(position.closed_at - position.opened_at) if position.opened_at and position.closed_at else None
+                })
+            
+            session.close()
+            
+            return jsonify({
+                'success': True,
+                'trades': trades,
+                'count': len(trades)
+            })
+            
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/market/overview')
+    def market_overview():
+        """Get market overview"""
+        try:
+            # If trading engine has market data
+            if app.trading_engine and hasattr(app.trading_engine, 'data_fetcher'):
+                overview = app.trading_engine.data_fetcher.get_market_overview()
+                return jsonify({
+                    'success': True,
+                    'market_overview': overview
+                })
+            else:
+                # Fallback with dummy data for demonstration
+                dummy_overview = {
+                    'BTCUSDT': {'price': 45000.0, 'change_24h': 2.5},
+                    'ETHUSDT': {'price': 3200.0, 'change_24h': -1.2},
+                    'SOLUSDT': {'price': 95.0, 'change_24h': 4.8},
+                    'DOGEUSDT': {'price': 0.075, 'change_24h': -0.8}
+                }
+                return jsonify({
+                    'success': True,
+                    'market_overview': dummy_overview
                 })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
@@ -483,7 +604,60 @@ def create_enhanced_app(trading_engine=None, signal_manager=None, prediction_sch
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/model/retrain', methods=['POST'])
+    @app.route('/api/model/validation')
+    def model_validation():
+        """Get model validation results comparing claimed vs real performance"""
+        try:
+            if not app.trading_engine or not hasattr(app.trading_engine, 'model'):
+                return jsonify({
+                    'success': False,
+                    'error': 'Trading engine or model not available'
+                })
+            
+            model = app.trading_engine.model
+            
+            if not model or not model.is_trained:
+                return jsonify({
+                    'success': False,
+                    'error': 'No trained model available'
+                })
+            
+            # Get recent trade data for validation
+            session = db_connection.get_session()
+            
+            # Get recent completed trades (last 50)
+            recent_trades = session.query(Position).filter(
+                Position.status == 'CLOSED'
+            ).order_by(Position.closed_at.desc()).limit(50).all()
+            
+            # Convert to validation format
+            trades_data = []
+            for trade in recent_trades:
+                trades_data.append({
+                    'pnl': trade.pnl,
+                    'pnl_percentage': trade.pnl_percentage,
+                    'symbol': trade.symbol,
+                    'side': trade.side
+                })
+            
+            session.close()
+            
+            # Get recent signals data (you can expand this based on your signal storage)
+            signals_data = []  # Placeholder - you can implement signal history retrieval
+            
+            # Validate model performance
+            validation_results = model.validate_model_performance(signals_data, trades_data)
+            
+            return jsonify({
+                'success': True,
+                'validation': validation_results
+            })
+            
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            })
     def retrain_model():
         """Retrain the AI model in background with status updates"""
         try:

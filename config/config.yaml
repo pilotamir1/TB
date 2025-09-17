@@ -36,8 +36,8 @@ data_sources:
 
 # Data fetching configuration
 data:
-  update_interval: 30  # seconds between data updates
-  min_fetch_interval_seconds: 30  # minimum seconds between fetches for same symbol
+  update_interval: 60  # seconds between data updates (every minute to collect sequentially)
+  min_fetch_interval_seconds: 60  # minimum seconds between fetches for same symbol (1 minute)
   max_retries: 3
   cache_enabled: true
 

@@ -358,13 +358,16 @@ class TradingEngine:
             self.logger.error(f"Error processing SELL signal for {symbol}: {e}")
     
     def _calculate_position_size(self, symbol: str, price: float) -> float:
-        """Calculate position size based on risk management"""
+        """Calculate position size based on user's requirement of 50% portfolio allocation"""
         try:
             available_balance = self.demo_balance - self.used_balance if self.demo_mode else self._get_real_balance()
             
-            # Use percentage of available balance
-            risk_amount = available_balance * TRADING_CONFIG['risk_per_trade']
-            position_size = risk_amount / price
+            # Use 50% of available balance as requested by user (both demo and live)
+            allocation_amount = available_balance * TRADING_CONFIG['risk_per_trade']  # Now set to 0.5 (50%)
+            position_size = allocation_amount / price
+            
+            self.logger.info(f"Position sizing for {symbol}: Available=${available_balance:.2f}, "
+                           f"Allocation(50%)=${allocation_amount:.2f}, Price=${price:.6f}, Size={position_size:.6f}")
             
             return position_size
             
