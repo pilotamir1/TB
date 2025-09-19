@@ -206,8 +206,8 @@ class DataFetcher:
         try:
             self.logger.info(f"Updating historical data for {symbol}")
             
-            # Get recent kline data from API (reduced to 5 to avoid API pressure)
-            kline_data = self.api.get_kline_data(symbol, self.timeframe, limit=5)
+            # Get recent kline data from API (20 candles for better analysis)
+            kline_data = self.api.get_kline_data(symbol, self.timeframe, limit=20)
             
             if not kline_data:
                 self.logger.warning(f"No kline data received for {symbol}")
