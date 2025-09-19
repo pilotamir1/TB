@@ -68,7 +68,7 @@ class ModelTrainer:
                 'message': 'Loading historical data from database'
             })
             
-            symbols = symbols or TRADING_CONFIG['symbols']
+            symbols = symbols or TRADING_CONFIG['training_symbols']
             train_samples = train_samples or ML_CONFIG['training_data_size']
             
             # Get configuration for 4h timeframe limits

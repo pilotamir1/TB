@@ -125,6 +125,195 @@ class CoinExAPI:
                     'low': str(base_price * 0.98)
                 }
             }
+
+    def get_all_tickers(self) -> Dict[str, Any]:
+        """Get all ticker information"""
+        try:
+            endpoint = "market/ticker/all"
+            return self._make_request('GET', endpoint, auth_required=False)
+        except Exception as e:
+            self.logger.warning(f"API failed for all tickers, using fallback: {e}")
+            # Return fallback data for main symbols
+            fallback_tickers = {}
+            base_prices = {
+                'BTCUSDT': 45000,
+                'ETHUSDT': 2500,
+                'SOLUSDT': 100,
+                'DOGEUSDT': 0.08
+            }
+            for symbol, price in base_prices.items():
+                fallback_tickers[symbol] = {
+                    'last': str(price),
+                    'vol': '1000.0',
+                    'high': str(price * 1.02),
+                    'low': str(price * 0.98),
+                    'buy': str(price * 0.999),
+                    'sell': str(price * 1.001)
+                }
+            return {'ticker': fallback_tickers}
+
+    def get_top_trading_pairs(self, limit: int = 100, quote_currency: str = 'USDT') -> List[str]:
+        """
+        Get top trading pairs by volume from CoinEx
+        
+        Args:
+            limit: Number of top pairs to return
+            quote_currency: Quote currency to filter by (default: USDT)
+            
+        Returns:
+            List of trading pair symbols sorted by volume descending
+        """
+        try:
+            all_tickers = self.get_all_tickers()
+            
+            if not all_tickers or 'ticker' not in all_tickers:
+                self.logger.warning("No ticker data available, using fallback symbols")
+                return self._generate_fallback_top_symbols(limit, quote_currency)
+            
+            # Filter and sort by volume
+            pairs_with_volume = []
+            for symbol, ticker_data in all_tickers['ticker'].items():
+                # Filter by quote currency
+                if not symbol.endswith(quote_currency):
+                    continue
+                    
+                try:
+                    volume = float(ticker_data.get('vol', 0))
+                    price = float(ticker_data.get('last', 0))
+                    
+                    # Calculate volume in quote currency (volume * price)
+                    volume_in_quote = volume * price
+                    
+                    if volume_in_quote > 0:  # Only include pairs with actual volume
+                        pairs_with_volume.append((symbol, volume_in_quote))
+                except (ValueError, TypeError):
+                    continue
+            
+            # Sort by volume descending and take top N
+            pairs_with_volume.sort(key=lambda x: x[1], reverse=True)
+            top_pairs = [pair[0] for pair in pairs_with_volume[:limit]]
+            
+            self.logger.info(f"Retrieved {len(top_pairs)} top trading pairs from CoinEx")
+            return top_pairs
+            
+        except Exception as e:
+            self.logger.error(f"Error getting top trading pairs: {e}")
+            return self._generate_fallback_top_symbols(limit, quote_currency)
+    
+    def _generate_fallback_top_symbols(self, limit: int, quote_currency: str = 'USDT') -> List[str]:
+        """Generate fallback list of popular trading symbols when API fails"""
+        # Popular cryptocurrencies that are commonly available on exchanges
+        popular_symbols = [
+            f'BTC{quote_currency}', f'ETH{quote_currency}', f'SOL{quote_currency}', f'DOGE{quote_currency}',
+            f'BNB{quote_currency}', f'XRP{quote_currency}', f'ADA{quote_currency}', f'AVAX{quote_currency}',
+            f'DOT{quote_currency}', f'MATIC{quote_currency}', f'LTC{quote_currency}', f'LINK{quote_currency}',
+            f'UNI{quote_currency}', f'ATOM{quote_currency}', f'ICP{quote_currency}', f'FIL{quote_currency}',
+            f'TRX{quote_currency}', f'ETC{quote_currency}', f'XLM{quote_currency}', f'VET{quote_currency}',
+            f'ALGO{quote_currency}', f'AAVE{quote_currency}', f'MANA{quote_currency}', f'SAND{quote_currency}',
+            f'CRV{quote_currency}', f'COMP{quote_currency}', f'MKR{quote_currency}', f'SNX{quote_currency}',
+            f'SUSHI{quote_currency}', f'BAT{quote_currency}', f'ZRX{quote_currency}', f'ENJ{quote_currency}',
+            f'CHZ{quote_currency}', f'HOT{quote_currency}', f'ICX{quote_currency}', f'ONT{quote_currency}',
+            f'ZIL{quote_currency}', f'RVN{quote_currency}', f'QTUM{quote_currency}', f'WAVES{quote_currency}',
+            f'KSM{quote_currency}', f'NEAR{quote_currency}', f'FTM{quote_currency}', f'ONE{quote_currency}',
+            f'HBAR{quote_currency}', f'EGLD{quote_currency}', f'THETA{quote_currency}', f'XTZ{quote_currency}',
+            f'DASH{quote_currency}', f'NEO{quote_currency}', f'IOTA{quote_currency}', f'EOS{quote_currency}',
+            f'XMR{quote_currency}', f'ZEC{quote_currency}', f'BCH{quote_currency}', f'BSV{quote_currency}',
+            f'CAKE{quote_currency}', f'RUNE{quote_currency}', f'ALPHA{quote_currency}', f'BEL{quote_currency}',
+            f'CTK{quote_currency}', f'DENT{quote_currency}', f'FTT{quote_currency}', f'KAVA{quote_currency}',
+            f'LRC{quote_currency}', f'OGN{quote_currency}', f'RSR{quote_currency}', f'SRM{quote_currency}',
+            f'STORJ{quote_currency}', f'SXP{quote_currency}', f'TROY{quote_currency}', f'WTC{quote_currency}',
+            f'YFI{quote_currency}', f'ZEN{quote_currency}', f'API3{quote_currency}', f'BADGER{quote_currency}',
+            f'BAND{quote_currency}', f'CRO{quote_currency}', f'DF{quote_currency}', f'DODO{quote_currency}',
+            f'GRT{quote_currency}', f'KEEP{quote_currency}', f'NKN{quote_currency}', f'NUC{quote_currency}',
+            f'OXT{quote_currency}', f'REEF{quote_currency}', f'REN{quote_currency}', f'ROSE{quote_currency}',
+            f'SKALE{quote_currency}', f'TKO{quote_currency}', f'TLM{quote_currency}', f'TORN{quote_currency}',
+            f'UNFI{quote_currency}', f'UTK{quote_currency}', f'WIN{quote_currency}', f'YFII{quote_currency}',
+            f'1INCH{quote_currency}', f'AKRO{quote_currency}', f'AXS{quote_currency}', f'BAKE{quote_currency}',
+            f'BNT{quote_currency}', f'BTCST{quote_currency}', f'BURGER{quote_currency}', f'BZRX{quote_currency}'
+        ]
+        
+        # Return requested limit, but at least include the 4 main training symbols
+        result = popular_symbols[:limit]
+        self.logger.info(f"Using fallback list of {len(result)} popular symbols")
+        return result
+
+    def get_available_symbols_from_list(self, symbol_list: List[str]) -> List[str]:
+        """
+        Check which symbols from a given list are available and tradable on CoinEx
+        
+        Args:
+            symbol_list: List of symbols to check (e.g., ['BTCUSDT', 'ETHUSDT', ...])
+            
+        Returns:
+            List of symbols that are available on CoinEx
+        """
+        try:
+            all_tickers = self.get_all_tickers()
+            
+            if not all_tickers or 'ticker' not in all_tickers:
+                self.logger.warning("No ticker data available, using training symbols as fallback")
+                # Fallback to training symbols if API fails
+                from config.settings import TRADING_CONFIG
+                return TRADING_CONFIG['training_symbols']
+            
+            available_symbols = []
+            coinex_symbols = set(all_tickers['ticker'].keys())
+            
+            for symbol in symbol_list:
+                if symbol in coinex_symbols:
+                    # Check if the symbol has valid ticker data
+                    ticker_data = all_tickers['ticker'][symbol]
+                    try:
+                        # Ensure the symbol has valid price and volume data
+                        price = float(ticker_data.get('last', 0))
+                        volume = float(ticker_data.get('vol', 0))
+                        
+                        if price > 0 and volume > 0:  # Valid and actively traded
+                            available_symbols.append(symbol)
+                    except (ValueError, TypeError):
+                        # Skip symbols with invalid data
+                        continue
+            
+            self.logger.info(f"Found {len(available_symbols)} available symbols out of {len(symbol_list)} requested")
+            return available_symbols
+            
+        except Exception as e:
+            self.logger.error(f"Error checking symbol availability: {e}")
+            # Fallback to training symbols
+            from config.settings import TRADING_CONFIG
+            return TRADING_CONFIG['training_symbols']
+
+    def get_coinmarketcap_available_symbols(self, limit: int = 1000) -> List[str]:
+        """
+        Get symbols from CoinMarketCap top list that are available on CoinEx
+        
+        Args:
+            limit: Number of top cryptocurrencies to check from CoinMarketCap
+            
+        Returns:
+            List of symbols available on CoinEx from CoinMarketCap top list
+        """
+        try:
+            from utils.coinmarketcap_api import CoinMarketCapAPI
+            
+            # Get top cryptocurrencies from CoinMarketCap
+            cmc_api = CoinMarketCapAPI()
+            top_cryptos = cmc_api.get_top_cryptocurrencies(limit)
+            
+            # Convert to trading pair symbols
+            cmc_symbols = cmc_api.extract_symbols(top_cryptos, 'USDT')
+            
+            # Check which ones are available on CoinEx
+            available_symbols = self.get_available_symbols_from_list(cmc_symbols)
+            
+            self.logger.info(f"CoinMarketCap integration: {len(available_symbols)} symbols available on CoinEx from top {limit}")
+            return available_symbols
+            
+        except Exception as e:
+            self.logger.error(f"Error getting CoinMarketCap symbols: {e}")
+            # Fallback to training symbols
+            from config.settings import TRADING_CONFIG
+            return TRADING_CONFIG['training_symbols']
     
     def get_balance(self) -> Dict[str, Any]:
         """Get account balance"""

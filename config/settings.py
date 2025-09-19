@@ -35,9 +35,29 @@ TRADING_CONFIG = {
     'timeframe': '1m',  # 4-hour timeframe as specified
     'demo_balance': 100.0,  # Starting demo balance in USD
     'confidence_threshold': 0.6,  # 60% confidence minimum as requested by user
-    'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],
+    'training_symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],  # Symbols for model training (kept as requested)
+    'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],  # Keep backward compatibility
+    'analysis_symbols': [],  # Will be populated with CoinMarketCap top symbols available on CoinEx
+    'coinmarketcap_limit': 1000,  # Number of top symbols to fetch from CoinMarketCap
     'max_positions': 4,  # Maximum concurrent positions
     'risk_per_trade': 0.5,  # 50% of portfolio per trade as requested by user
+    'use_coinmarketcap_symbols': True,  # Enable CoinMarketCap-based symbol selection
+    
+    # Performance Enhancement Configuration
+    'use_websocket': True,
+    'ws_channels': ['ticker', 'kline_1m'],
+    'ws_max_subscriptions_tier1': 250,
+    'rest_concurrency': 80,
+    'rest_timeout_sec': 10,
+    'fetch_batch_size': 200,
+    'scan_tier1_size': 200,
+    'scan_tier1_interval_sec': 60,
+    'scan_tier2_interval_sec': 240,
+    'process_pool_workers': max(2, os.cpu_count() - 1),
+    'ring_buffer_size': 1000,
+    'analysis_on_candle_close_only': True,
+    'backoff_base_sec': 1,
+    'backoff_max_sec': 60,
 }
 
 # Take Profit / Stop Loss Configuration
@@ -56,6 +76,14 @@ COINEX_CONFIG = {
     'sandbox_mode': os.getenv('COINEX_SANDBOX', 'false').lower() == 'true',  # Default to spot trading API
     'base_url': 'https://api.coinex.com/v1/',  # Spot trading API
     'sandbox_url': 'https://api.coinex.com/v1/',  # Use same spot API for better compatibility
+}
+
+# CoinMarketCap API Configuration
+COINMARKETCAP_CONFIG = {
+    'api_key': 'b63aec19-7b5c-4da3-8fdb-b10c441bd4c4',
+    'base_url': 'https://pro-api.coinmarketcap.com/v1/',
+    'listings_endpoint': 'cryptocurrency/listings/latest',
+    'limit': 1000,  # Get top 1000 cryptocurrencies
 }
 
 # Machine Learning Configuration
@@ -79,7 +107,7 @@ WEB_CONFIG = {
 # Data Update Configuration
 DATA_CONFIG = {
     'update_interval': 60,  # Update every 60 seconds (1 minute) to collect data sequentially
-    'batch_size': 5,  # Reduced to 5 to avoid API pressure
+    'batch_size': 20,  # Increased to 20 candles for better analysis
     'max_retries': 3,
     'timeout': 30,
     'min_1m_candles': 1440,  # Minimum aligned 4h candles required for training
