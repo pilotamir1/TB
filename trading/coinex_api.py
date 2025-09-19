@@ -236,6 +236,84 @@ class CoinExAPI:
         result = popular_symbols[:limit]
         self.logger.info(f"Using fallback list of {len(result)} popular symbols")
         return result
+
+    def get_available_symbols_from_list(self, symbol_list: List[str]) -> List[str]:
+        """
+        Check which symbols from a given list are available and tradable on CoinEx
+        
+        Args:
+            symbol_list: List of symbols to check (e.g., ['BTCUSDT', 'ETHUSDT', ...])
+            
+        Returns:
+            List of symbols that are available on CoinEx
+        """
+        try:
+            all_tickers = self.get_all_tickers()
+            
+            if not all_tickers or 'ticker' not in all_tickers:
+                self.logger.warning("No ticker data available, using training symbols as fallback")
+                # Fallback to training symbols if API fails
+                from config.settings import TRADING_CONFIG
+                return TRADING_CONFIG['training_symbols']
+            
+            available_symbols = []
+            coinex_symbols = set(all_tickers['ticker'].keys())
+            
+            for symbol in symbol_list:
+                if symbol in coinex_symbols:
+                    # Check if the symbol has valid ticker data
+                    ticker_data = all_tickers['ticker'][symbol]
+                    try:
+                        # Ensure the symbol has valid price and volume data
+                        price = float(ticker_data.get('last', 0))
+                        volume = float(ticker_data.get('vol', 0))
+                        
+                        if price > 0 and volume > 0:  # Valid and actively traded
+                            available_symbols.append(symbol)
+                    except (ValueError, TypeError):
+                        # Skip symbols with invalid data
+                        continue
+            
+            self.logger.info(f"Found {len(available_symbols)} available symbols out of {len(symbol_list)} requested")
+            return available_symbols
+            
+        except Exception as e:
+            self.logger.error(f"Error checking symbol availability: {e}")
+            # Fallback to training symbols
+            from config.settings import TRADING_CONFIG
+            return TRADING_CONFIG['training_symbols']
+
+    def get_coinmarketcap_available_symbols(self, limit: int = 1000) -> List[str]:
+        """
+        Get symbols from CoinMarketCap top list that are available on CoinEx
+        
+        Args:
+            limit: Number of top cryptocurrencies to check from CoinMarketCap
+            
+        Returns:
+            List of symbols available on CoinEx from CoinMarketCap top list
+        """
+        try:
+            from utils.coinmarketcap_api import CoinMarketCapAPI
+            
+            # Get top cryptocurrencies from CoinMarketCap
+            cmc_api = CoinMarketCapAPI()
+            top_cryptos = cmc_api.get_top_cryptocurrencies(limit)
+            
+            # Convert to trading pair symbols
+            cmc_symbols = cmc_api.extract_symbols(top_cryptos, 'USDT')
+            
+            # Check which ones are available on CoinEx
+            available_symbols = self.get_available_symbols_from_list(cmc_symbols)
+            
+            self.logger.info(f"CoinMarketCap integration: {len(available_symbols)} symbols available on CoinEx from top {limit}")
+            return available_symbols
+            
+        except Exception as e:
+            self.logger.error(f"Error getting CoinMarketCap symbols: {e}")
+            # Fallback to training symbols
+            from config.settings import TRADING_CONFIG
+            return TRADING_CONFIG['training_symbols']
     
     def get_balance(self) -> Dict[str, Any]:
         """Get account balance"""

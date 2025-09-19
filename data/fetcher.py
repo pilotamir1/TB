@@ -28,8 +28,8 @@ class DataFetcher:
         self.analysis_symbols = []  # Will be populated with top symbols
         self.timeframe = TRADING_CONFIG['timeframe']
         self.update_interval = DATA_CONFIG['update_interval']
-        self.use_top_symbols = TRADING_CONFIG.get('use_top_symbols_for_analysis', True)
-        self.top_symbols_limit = TRADING_CONFIG.get('top_symbols_limit', 100)
+        self.use_coinmarketcap_symbols = TRADING_CONFIG.get('use_coinmarketcap_symbols', True)
+        self.coinmarketcap_limit = TRADING_CONFIG.get('coinmarketcap_limit', 1000)
         
         # Threading
         self.update_thread = None
@@ -49,25 +49,25 @@ class DataFetcher:
         self.logger.info(f"Data fetcher initialized with {len(self.training_symbols)} training symbols and {len(self.analysis_symbols)} analysis symbols")
     
     def _update_analysis_symbols(self):
-        """Update the list of analysis symbols from CoinEx top pairs"""
+        """Update the list of analysis symbols from CoinMarketCap top cryptocurrencies available on CoinEx"""
         try:
-            if self.use_top_symbols:
-                self.logger.info("Fetching top trading pairs from CoinEx...")
-                top_symbols = self.api.get_top_trading_pairs(limit=self.top_symbols_limit)
-                if top_symbols:
-                    self.analysis_symbols = top_symbols
-                    self.logger.info(f"Updated analysis symbols with {len(self.analysis_symbols)} top trading pairs")
+            if self.use_coinmarketcap_symbols:
+                self.logger.info(f"Fetching top {self.coinmarketcap_limit} cryptocurrencies from CoinMarketCap...")
+                cmc_symbols = self.api.get_coinmarketcap_available_symbols(limit=self.coinmarketcap_limit)
+                if cmc_symbols:
+                    self.analysis_symbols = cmc_symbols
+                    self.logger.info(f"Updated analysis symbols with {len(self.analysis_symbols)} CoinMarketCap symbols available on CoinEx")
                     
                     # Update the global config for other components
                     TRADING_CONFIG['analysis_symbols'] = self.analysis_symbols
                 else:
                     # Fallback to training symbols
                     self.analysis_symbols = self.training_symbols.copy()
-                    self.logger.warning("Failed to get top symbols, falling back to training symbols")
+                    self.logger.warning("Failed to get CoinMarketCap symbols, falling back to training symbols")
             else:
-                # Use training symbols for analysis if top symbols disabled
+                # Use training symbols for analysis if CoinMarketCap integration disabled
                 self.analysis_symbols = self.training_symbols.copy()
-                self.logger.info("Top symbols disabled, using training symbols for analysis")
+                self.logger.info("CoinMarketCap integration disabled, using training symbols for analysis")
                 
         except Exception as e:
             self.logger.error(f"Error updating analysis symbols: {e}")
@@ -75,7 +75,7 @@ class DataFetcher:
     
     def get_active_symbols(self) -> List[str]:
         """Get symbols that should be actively monitored for trading/analysis"""
-        return self.analysis_symbols if self.use_top_symbols else self.training_symbols
+        return self.analysis_symbols if self.use_coinmarketcap_symbols else self.training_symbols
     
     def get_training_symbols(self) -> List[str]:
         """Get symbols that should be used for model training"""
@@ -121,15 +121,15 @@ class DataFetcher:
 
     def _update_loop(self):
         """Main update loop for real-time data with throttling"""
-        symbols_refresh_interval = 3600  # Refresh top symbols every hour
+        symbols_refresh_interval = 24 * 3600  # Refresh CoinMarketCap symbols once per day
         last_symbols_refresh = 0
         
         while not self.stop_updates:
             try:
-                # Periodically refresh analysis symbols
+                # Periodically refresh analysis symbols (less frequent for CoinMarketCap)
                 current_time = time.time()
                 if current_time - last_symbols_refresh > symbols_refresh_interval:
-                    self.logger.info("Refreshing analysis symbols...")
+                    self.logger.info("Refreshing CoinMarketCap analysis symbols...")
                     self._update_analysis_symbols()
                     last_symbols_refresh = current_time
                 

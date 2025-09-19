@@ -37,11 +37,11 @@ TRADING_CONFIG = {
     'confidence_threshold': 0.6,  # 60% confidence minimum as requested by user
     'training_symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],  # Symbols for model training (kept as requested)
     'symbols': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],  # Keep backward compatibility
-    'analysis_symbols': [],  # Will be populated with top 100 symbols from CoinEx
-    'top_symbols_limit': 100,  # Number of top symbols to fetch for analysis/trading
+    'analysis_symbols': [],  # Will be populated with CoinMarketCap top symbols available on CoinEx
+    'coinmarketcap_limit': 1000,  # Number of top symbols to fetch from CoinMarketCap
     'max_positions': 4,  # Maximum concurrent positions
     'risk_per_trade': 0.5,  # 50% of portfolio per trade as requested by user
-    'use_top_symbols_for_analysis': True,  # Enable top 100 symbols for analysis/trading
+    'use_coinmarketcap_symbols': True,  # Enable CoinMarketCap-based symbol selection
 }
 
 # Take Profit / Stop Loss Configuration
@@ -60,6 +60,14 @@ COINEX_CONFIG = {
     'sandbox_mode': os.getenv('COINEX_SANDBOX', 'false').lower() == 'true',  # Default to spot trading API
     'base_url': 'https://api.coinex.com/v1/',  # Spot trading API
     'sandbox_url': 'https://api.coinex.com/v1/',  # Use same spot API for better compatibility
+}
+
+# CoinMarketCap API Configuration
+COINMARKETCAP_CONFIG = {
+    'api_key': 'b63aec19-7b5c-4da3-8fdb-b10c441bd4c4',
+    'base_url': 'https://pro-api.coinmarketcap.com/v1/',
+    'listings_endpoint': 'cryptocurrency/listings/latest',
+    'limit': 1000,  # Get top 1000 cryptocurrencies
 }
 
 # Machine Learning Configuration
