@@ -42,6 +42,22 @@ TRADING_CONFIG = {
     'max_positions': 4,  # Maximum concurrent positions
     'risk_per_trade': 0.5,  # 50% of portfolio per trade as requested by user
     'use_coinmarketcap_symbols': True,  # Enable CoinMarketCap-based symbol selection
+    
+    # Performance Enhancement Configuration
+    'use_websocket': True,
+    'ws_channels': ['ticker', 'kline_1m'],
+    'ws_max_subscriptions_tier1': 250,
+    'rest_concurrency': 80,
+    'rest_timeout_sec': 10,
+    'fetch_batch_size': 200,
+    'scan_tier1_size': 200,
+    'scan_tier1_interval_sec': 60,
+    'scan_tier2_interval_sec': 240,
+    'process_pool_workers': max(2, os.cpu_count() - 1),
+    'ring_buffer_size': 1000,
+    'analysis_on_candle_close_only': True,
+    'backoff_base_sec': 1,
+    'backoff_max_sec': 60,
 }
 
 # Take Profit / Stop Loss Configuration
